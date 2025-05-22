@@ -10,7 +10,6 @@ from collections import defaultdict
 from transformers import HfArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
-from igraph import Graph
 import igraph as ig
 import numpy as np
 from collections import defaultdict
@@ -986,13 +985,13 @@ class HippoRAG:
             else:
                 avg_ent_chars = 0
                 avg_ent_words = 0
-                
+
             openie_dict = {
                 'docs': all_openie_info,
                 'avg_ent_chars': avg_ent_chars,
                 'avg_ent_words': avg_ent_words
             }
-            
+
             with open(self.openie_results_path, 'w') as f:
                 json.dump(openie_dict, f)
             logger.info(f"OpenIE results saved to {self.openie_results_path}")
@@ -1156,7 +1155,7 @@ class HippoRAG:
         # Check if the graph has the expected number of nodes
         expected_node_count = len(self.entity_node_keys) + len(self.passage_node_keys)
         actual_node_count = self.graph.vcount()
-        
+
         if expected_node_count != actual_node_count:
             logger.warning(f"Graph node count mismatch: expected {expected_node_count}, got {actual_node_count}")
             # If the graph is empty but we have nodes, we need to add them
@@ -1169,11 +1168,11 @@ class HippoRAG:
         try:
             igraph_name_to_idx = {node["name"]: idx for idx, node in enumerate(self.graph.vs)} # from node key to the index in the backbone graph
             self.node_name_to_vertex_idx = igraph_name_to_idx
-            
+
             # Check if all entity and passage nodes are in the graph
             missing_entity_nodes = [node_key for node_key in self.entity_node_keys if node_key not in igraph_name_to_idx]
             missing_passage_nodes = [node_key for node_key in self.passage_node_keys if node_key not in igraph_name_to_idx]
-            
+
             if missing_entity_nodes or missing_passage_nodes:
                 logger.warning(f"Missing nodes in graph: {len(missing_entity_nodes)} entity nodes, {len(missing_passage_nodes)} passage nodes")
                 # If nodes are missing, rebuild the graph
@@ -1182,7 +1181,7 @@ class HippoRAG:
                 # Update the mapping
                 igraph_name_to_idx = {node["name"]: idx for idx, node in enumerate(self.graph.vs)}
                 self.node_name_to_vertex_idx = igraph_name_to_idx
-            
+
             self.entity_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.entity_node_keys] # a list of backbone graph node index
             self.passage_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.passage_node_keys] # a list of backbone passage node index
         except Exception as e:
@@ -1215,7 +1214,7 @@ class HippoRAG:
             # Check if the lengths match
             if not (len(self.passage_node_keys) == len(ner_results_dict) == len(triple_results_dict)):
                 logger.warning(f"Length mismatch: passage_node_keys={len(self.passage_node_keys)}, ner_results_dict={len(ner_results_dict)}, triple_results_dict={len(triple_results_dict)}")
-                
+
                 # If there are missing keys, create empty entries for them
                 for chunk_id in self.passage_node_keys:
                     if chunk_id not in ner_results_dict:
@@ -1308,7 +1307,7 @@ class HippoRAG:
         if len(self.fact_embeddings) == 0:
             logger.warning("No facts available for scoring. Returning empty array.")
             return np.array([])
-            
+
         try:
             query_fact_scores = np.dot(self.fact_embeddings, query_embedding.T) # shape: (#facts, )
             query_fact_scores = np.squeeze(query_fact_scores) if query_fact_scores.ndim == 2 else query_fact_scores
@@ -1512,12 +1511,12 @@ class HippoRAG:
         """
         # load args
         link_top_k: int = self.global_config.linking_top_k
-        
+
         # Check if there are any facts to rerank
         if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
             logger.warning("No facts available for reranking. Returning empty lists.")
             return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
-            
+
         try:
             # Get the top k facts by score
             if len(query_fact_scores) <= link_top_k:
@@ -1526,26 +1525,26 @@ class HippoRAG:
             else:
                 # Otherwise get the top k
                 candidate_fact_indices = np.argsort(query_fact_scores)[-link_top_k:][::-1].tolist()
-                
+
             # Get the actual fact IDs
             real_candidate_fact_ids = [self.fact_node_keys[idx] for idx in candidate_fact_indices]
             fact_row_dict = self.fact_embedding_store.get_rows(real_candidate_fact_ids)
             candidate_facts = [eval(fact_row_dict[id]['content']) for id in real_candidate_fact_ids]
-            
+
             # Rerank the facts
             top_k_fact_indices, top_k_facts, reranker_dict = self.rerank_filter(query,
                                                                                 candidate_facts,
                                                                                 candidate_fact_indices,
                                                                                 len_after_rerank=link_top_k)
-            
+
             rerank_log = {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
-            
+
             return top_k_fact_indices, top_k_facts, rerank_log
-            
+
         except Exception as e:
             logger.error(f"Error in rerank_facts: {str(e)}")
             return [], [], {'facts_before_rerank': [], 'facts_after_rerank': [], 'error': str(e)}
-    
+
     def run_ppr(self,
                 reset_prob: np.ndarray,
                 damping: float =0.5) -> Tuple[np.ndarray, np.ndarray]:

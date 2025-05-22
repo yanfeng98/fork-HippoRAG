@@ -3,19 +3,11 @@
     <img src="https://github.com/OSU-NLP-Group/HippoRAG/raw/main/images/hippo_brain.png" width="55%" style="max-width: 300px;">
 </p>
 
-[<img align="center" src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/drive/1nuelysWsXL8F5xH6q4JYJI8mvtlmeM9O#scrollTo=TjHdNe2KC81K)
-
 [<img align="center" src="https://img.shields.io/badge/arXiv-2502.14802 HippoRAG 2-b31b1b" />](https://arxiv.org/abs/2502.14802)
 [<img align="center" src="https://img.shields.io/badge/🤗 Dataset-HippoRAG 2-yellow" />](https://huggingface.co/datasets/osunlp/HippoRAG_2/tree/main)
 [<img align="center" src="https://img.shields.io/badge/arXiv-2405.14831 HippoRAG 1-b31b1b" />](https://arxiv.org/abs/2405.14831)
-[<img align="center" src="https://img.shields.io/badge/GitHub-HippoRAG 1-blue" />](https://github.com/OSU-NLP-Group/HippoRAG/tree/legacy)
-[<img align="center" src="https://discord.com/api/guilds/1344074245705302206/widget.png?style=shield" />](https://discord.gg/fh58dH6k)
 
 ### HippoRAG 2 is a powerful memory framework for LLMs that enhances their ability to recognize and utilize connections in new knowledge—mirroring a key function of human long-term memory.
-
-Our experiments show that HippoRAG 2 improves associativity (multi-hop retrieval) and sense-making (the process of integrating large and complex contexts) in even the most advanced RAG systems, without sacrificing their performance on simpler tasks.
-
-Like its predecessor, HippoRAG 2 remains cost and latency efficient in online processes, while using significantly fewer resources for offline indexing compared to other graph-based solutions such as GraphRAG, RAPTOR, and LightRAG.
 
 <p align="center">
   <img align="center" src="https://github.com/OSU-NLP-Group/HippoRAG/raw/main/images/intro.png" />
@@ -32,14 +24,26 @@ categories, bringing it one step closer to true long-term memory.
   <b>Figure 2:</b> HippoRAG 2 methodology.
 </p>
 
-#### Check out our papers to learn more:
-
-* [**HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models**](https://arxiv.org/abs/2405.14831) [NeurIPS '24].
-* [**From RAG to Memory: Non-Parametric Continual Learning for Large Language Models**](https://arxiv.org/abs/2502.14802) [Under Review].
-
 ----
 
 ## Installation
+
+在 ~/.config/uv/uv.toml 或者 /etc/uv/uv.toml 填写下面的内容：
+
+```bash
+[[index]]
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/"
+default = true
+```
+
+```bash
+pip install uv
+uv python install 3.12
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
 
 ```sh
 conda create -n hipporag python=3.10
@@ -83,9 +87,9 @@ llm_model_name = 'gpt-4o-mini' # Any OpenAI model name
 embedding_model_name = 'nvidia/NV-Embed-v2'# Embedding model name (NV-Embed, GritLM or Contriever for now)
 
 #Startup a HippoRAG instance
-hipporag = HippoRAG(save_dir=save_dir, 
+hipporag = HippoRAG(save_dir=save_dir,
                     llm_model_name=llm_model_name,
-                    embedding_model_name=embedding_model_name) 
+                    embedding_model_name=embedding_model_name)
 
 #Run indexing
 hipporag.index(docs=docs)
@@ -119,7 +123,7 @@ gold_docs = [
     "Montebello is a part of Rockland County."]
 ]
 
-rag_results = hipporag.rag_qa(queries=queries, 
+rag_results = hipporag.rag_qa(queries=queries,
                               gold_docs=gold_docs,
                               gold_answers=answers)
 ```
@@ -127,12 +131,12 @@ rag_results = hipporag.rag_qa(queries=queries,
 #### Example (OpenAI Compatible Embeddings)
 
 If you want to use LLMs and Embeddings Compatible to OpenAI, please use the following methods.</p>
-    
+
 ```python
-hipporag = HippoRAG(save_dir=save_dir, 
+hipporag = HippoRAG(save_dir=save_dir,
     llm_model_name='Your LLM Model name',
     llm_base_url='Your LLM Model url',
-    embedding_model_name='Your Embedding model name',  
+    embedding_model_name='Your Embedding model name',
     embedding_base_url='Your Embedding model url')
 ```
 
@@ -150,10 +154,10 @@ export HF_HOME=<path to Huggingface home directory>
 conda activate hipporag  # vllm should be in this environment
 
 # Tune gpu-memory-utilization or max_model_len to fit your GPU memory, if OOM occurs
-vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 2 --max_model_len 4096 --gpu-memory-utilization 0.95 
+vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 2 --max_model_len 4096 --gpu-memory-utilization 0.95
 ```
 
-2. Now you can use very similar code to the one above to use `hipporag`: 
+2. Now you can use very similar code to the one above to use `hipporag`:
 
 ```python
 save_dir = 'outputs'# Define save directory for HippoRAG objects (each LLM/Embedding model combination will create a new subdirectory)
@@ -171,17 +175,17 @@ hipporag = HippoRAG(save_dir=save_dir,
 
 ## Testing
 
-When making a contribution to HippoRAG, please run the scripts below to ensure that your changes do not result in unexpected behavior from our core modules. 
+When making a contribution to HippoRAG, please run the scripts below to ensure that your changes do not result in unexpected behavior from our core modules.
 
 These scripts test for indexing, graph loading, document deletion and incremental updates to a HippoRAG object.
 
 ### OpenAI Test
 
-To test HippoRAG with an OpenAI LLM and embedding model, simply run the following. 
+To test HippoRAG with an OpenAI LLM and embedding model, simply run the following.
 The cost of this test will be negligible.
 
 ```sh
-export OPENAI_API_KEY=<your openai api key> 
+export OPENAI_API_KEY=<your openai api key>
 
 conda activate hipporag
 
@@ -253,7 +257,7 @@ export HF_HOME=<path to Huggingface home directory>
 conda activate hipporag  # vllm should be in this environment
 
 # Tune gpu-memory-utilization or max_model_len to fit your GPU memory, if OOM occurs
-vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 2 --max_model_len 4096 --gpu-memory-utilization 0.95 
+vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 2 --max_model_len 4096 --gpu-memory-utilization 0.95
 ```
 
 2. Use another GPUs to run the main program in another terminal.
@@ -268,7 +272,7 @@ python main.py --dataset $dataset --llm_base_url http://localhost:8000/v1 --llm_
 
 #### Advanced: Run with vLLM offline batch
 
-vLLM offers an [offline batch mode](https://docs.vllm.ai/en/latest/getting_started/quickstart.html#offline-batched-inference) for faster inference, which could bring us more than 3x faster indexing compared to vLLM online server. 
+vLLM offers an [offline batch mode](https://docs.vllm.ai/en/latest/getting_started/quickstart.html#offline-batched-inference) for faster inference, which could bring us more than 3x faster indexing compared to vLLM online server.
 
 1. Use the following command to run the main program with vLLM offline batch mode.
 
@@ -406,7 +410,7 @@ When preparing your data, you may need to chunk each passage, as longer passage 
 
 ## Contact
 
-Questions or issues? File an issue or contact 
+Questions or issues? File an issue or contact
 [Bernal Jiménez Gutiérrez](mailto:jimenezgutierrez.1@osu.edu),
 [Yiheng Shu](mailto:shu.251@osu.edu),
 [Yu Su](mailto:su.809@osu.edu),
@@ -419,13 +423,13 @@ If you find this work useful, please consider citing our papers:
 ### HippoRAG 2
 ```
 @misc{gutiérrez2025ragmemorynonparametriccontinual,
-      title={From RAG to Memory: Non-Parametric Continual Learning for Large Language Models}, 
+      title={From RAG to Memory: Non-Parametric Continual Learning for Large Language Models},
       author={Bernal Jiménez Gutiérrez and Yiheng Shu and Weijian Qi and Sizhe Zhou and Yu Su},
       year={2025},
       eprint={2502.14802},
       archivePrefix={arXiv},
       primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2502.14802}, 
+      url={https://arxiv.org/abs/2502.14802},
 }
 ```
 
@@ -433,7 +437,7 @@ If you find this work useful, please consider citing our papers:
 
 ```
 @inproceedings{gutiérrez2024hipporag,
-      title={HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models}, 
+      title={HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models},
       author={Bernal Jiménez Gutiérrez and Yiheng Shu and Yu Gu and Michihiro Yasunaga and Yu Su},
       booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
       year={2024},

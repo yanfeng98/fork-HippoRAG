@@ -20,11 +20,11 @@ class BaseConfig:
         metadata={"help": "Class name indicating which LLM model to use."}
     )
     llm_base_url: str = field(
-        default=None,
+        default=os.environ["OPENAI_API_BASE"],
         metadata={"help": "Base URL for the LLM model, if none, means using OPENAI service."}
     )
     embedding_base_url: str = field(
-        default=None,
+        default=os.environ["OPENAI_API_BASE"],
         metadata={"help": "Base URL for an OpenAI compatible embedding model, if none, means using OPENAI service."}
     )
     azure_endpoint: str = field(

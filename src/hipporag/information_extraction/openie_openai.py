@@ -39,8 +39,8 @@ def _extract_ner_from_response(real_response):
 class OpenIE:
     def __init__(self, llm_model: CacheOpenAI):
         # Init prompt template manager
-        self.prompt_template_manager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
-        self.llm_model = llm_model
+        self.prompt_template_manager: PromptTemplateManager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
+        self.llm_model: CacheOpenAI = llm_model
 
     def ner(self, chunk_key: str, passage: str) -> NerRawOutput:
         # PREPROCESSING

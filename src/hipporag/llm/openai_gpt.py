@@ -4,12 +4,13 @@ import json
 import os
 import sqlite3
 from copy import deepcopy
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 import httpx
 import openai
 from filelock import FileLock
 from openai import OpenAI
+from openai.types.chat import ChatCompletion
 from openai import AzureOpenAI
 from packaging import version
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -28,30 +29,30 @@ def cache_response(func):
     def wrapper(self, *args, **kwargs):
         # get messages from args or kwargs
         if args:
-            messages = args[0]
+            messages: List[TextChatMessage] = args[0]
         else:
-            messages = kwargs.get("messages")
+            messages: List[TextChatMessage] = kwargs.get("messages")
         if messages is None:
             raise ValueError("Missing required 'messages' parameter for caching.")
 
         # get model, seed and temperature from kwargs or self.llm_config.generate_params
-        gen_params = getattr(self, "llm_config", {}).generate_params if hasattr(self, "llm_config") else {}
-        model = kwargs.get("model", gen_params.get("model"))
-        seed = kwargs.get("seed", gen_params.get("seed"))
-        temperature = kwargs.get("temperature", gen_params.get("temperature"))
+        gen_params: dict[str, Any] = getattr(self, "llm_config", {}).generate_params if hasattr(self, "llm_config") else {}
+        model: str = kwargs.get("model", gen_params.get("model"))
+        seed: int = kwargs.get("seed", gen_params.get("seed"))
+        temperature: float = kwargs.get("temperature", gen_params.get("temperature"))
 
         # build key data, convert to JSON string and hash to generate key_hash
-        key_data = {
+        key_data: dict[str, Any] = {
             "messages": messages,  # messages requires JSON serializable
             "model": model,
             "seed": seed,
             "temperature": temperature,
         }
-        key_str = json.dumps(key_data, sort_keys=True, default=str)
-        key_hash = hashlib.sha256(key_str.encode("utf-8")).hexdigest()
+        key_str: str = json.dumps(key_data, sort_keys=True, default=str)
+        key_hash: str = hashlib.sha256(key_str.encode("utf-8")).hexdigest()
 
         # the file name of lock, ensure mutual exclusion when accessing concurrently
-        lock_file = self.cache_file_name + ".lock"
+        lock_file: str = self.cache_file_name + ".lock"
 
         # Try to read from SQLite cache
         with FileLock(lock_file):
@@ -104,7 +105,7 @@ def cache_response(func):
 def dynamic_retry_decorator(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
-        max_retries = getattr(self, "max_retries", 5)  
+        max_retries: int = getattr(self, "max_retries", 5)  
         dynamic_retry = retry(stop=stop_after_attempt(max_retries), wait=wait_fixed(1))
         decorated_func = dynamic_retry(func)
         return decorated_func(self, *args, **kwargs)
@@ -114,26 +115,26 @@ class CacheOpenAI(BaseLLM):
     """OpenAI LLM implementation."""
     @classmethod
     def from_experiment_config(cls, global_config: BaseConfig) -> "CacheOpenAI":
-        config_dict = global_config.__dict__
+        config_dict: dict[str, Any] = global_config.__dict__
         config_dict['max_retries'] = global_config.max_retry_attempts
-        cache_dir = os.path.join(global_config.save_dir, "llm_cache")
+        cache_dir: str = os.path.join(global_config.save_dir, "llm_cache")
         return cls(cache_dir=cache_dir, global_config=global_config)
 
-    def __init__(self, cache_dir, global_config, cache_filename: str = None,
+    def __init__(self, cache_dir: str, global_config: BaseConfig, cache_filename: str = None,
                  high_throughput: bool = True,
                  **kwargs) -> None:
 
         super().__init__()
-        self.cache_dir = cache_dir
-        self.global_config = global_config
+        self.cache_dir: str = cache_dir
+        self.global_config: BaseConfig = global_config
 
-        self.llm_name = global_config.llm_name
-        self.llm_base_url = global_config.llm_base_url
+        self.llm_name: str = global_config.llm_name
+        self.llm_base_url: str = global_config.llm_base_url
 
         os.makedirs(self.cache_dir, exist_ok=True)
         if cache_filename is None:
             cache_filename = f"{self.llm_name.replace('/', '_')}_cache.sqlite"
-        self.cache_file_name = os.path.join(self.cache_dir, cache_filename)
+        self.cache_file_name: str = os.path.join(self.cache_dir, cache_filename)
 
         self._init_llm_config()
         if high_throughput:
@@ -142,7 +143,7 @@ class CacheOpenAI(BaseLLM):
         else:
             client = None
 
-        self.max_retries = kwargs.get("max_retries", 2)
+        self.max_retries: int = kwargs.get("max_retries", 2)
 
         if self.global_config.azure_endpoint is None:
             self.openai_client = OpenAI(base_url=self.llm_base_url, http_client=client, max_retries=self.max_retries)
@@ -151,7 +152,7 @@ class CacheOpenAI(BaseLLM):
                                              azure_endpoint=self.global_config.azure_endpoint, max_retries=self.max_retries)
 
     def _init_llm_config(self) -> None:
-        config_dict = self.global_config.__dict__
+        config_dict: dict[str, Any] = self.global_config.__dict__
 
         config_dict['llm_name'] = self.global_config.llm_name
         config_dict['llm_base_url'] = self.global_config.llm_base_url
@@ -173,7 +174,7 @@ class CacheOpenAI(BaseLLM):
         messages: List[TextChatMessage],
         **kwargs
     ) -> Tuple[List[TextChatMessage], dict]:
-        params = deepcopy(self.llm_config.generate_params)
+        params: dict[str, Any] = deepcopy(self.llm_config.generate_params)
         if kwargs:
             params.update(kwargs)
         params["messages"] = messages
@@ -183,17 +184,15 @@ class CacheOpenAI(BaseLLM):
             # TODO strange version change in openai protocol, but our current vllm version not changed yet
             params['max_tokens'] = params.pop('max_completion_tokens')
 
-        response = self.openai_client.chat.completions.create(**params)
+        response: ChatCompletion = self.openai_client.chat.completions.create(**params)
 
-        response_message = response.choices[0].message.content
+        response_message: str = response.choices[0].message.content
         assert isinstance(response_message, str), "response_message should be a string"
         
-        metadata = {
+        metadata: dict[str, Any] = {
             "prompt_tokens": response.usage.prompt_tokens, 
             "completion_tokens": response.usage.completion_tokens,
             "finish_reason": response.choices[0].finish_reason,
         }
 
         return response_message, metadata
-
-

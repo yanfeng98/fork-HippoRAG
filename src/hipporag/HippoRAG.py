@@ -1,22 +1,16 @@
 import json
 import os
 import logging
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
-from typing import Union, Optional, List, Set, Dict, Any, Tuple, Literal
+from dataclasses import asdict
+from typing import List, Set, Dict, Tuple
 import numpy as np
-import importlib
-from collections import defaultdict
-from transformers import HfArgumentParser
-from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import igraph as ig
-import numpy as np
 from collections import defaultdict
 import re
 import time
 
-from .llm import _get_llm_class, BaseLLM
+from .llm import _get_llm_class, CacheOpenAI
 from .embedding_model import _get_embedding_model_class, BaseEmbeddingModel
 from .embedding_store import EmbeddingStore
 from .information_extraction import OpenIE
@@ -120,7 +114,7 @@ class HippoRAG:
             logger.info(f"Creating working directory: {self.working_dir}")
             os.makedirs(self.working_dir, exist_ok=True)
 
-        self.llm_model: BaseLLM = _get_llm_class(self.global_config)
+        self.llm_model: CacheOpenAI = _get_llm_class(self.global_config)
 
         if self.global_config.openie_mode == 'online':
             self.openie = OpenIE(llm_model=self.llm_model)

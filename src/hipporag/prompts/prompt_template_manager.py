@@ -1,9 +1,9 @@
 import os
 import asyncio
-import importlib.util
+import importlib
 from string import Template
-from typing import Dict, List, Union, Any, Optional
-from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Union, Any
+from dataclasses import dataclass, field
 
 
 from ..utils.logging_utils import get_logger
@@ -13,10 +13,6 @@ logger = get_logger(__name__)
 
 @dataclass
 class PromptTemplateManager:
-    # templates_dir: Optional[str] = field(
-    #     default=None, 
-    #     metadata={"help": "Directory containing template scripts. Default to the `templates` dir under dir whether this class is defined."}
-    # )
     role_mapping: Dict[str, str] = field(
         default_factory=lambda: {"system": "system", "user": "user", "assistant": "assistant"},
         metadata={"help": "Mapping from default roles in prompte template files to specific LLM providers' defined roles."}
@@ -32,10 +28,6 @@ class PromptTemplateManager:
         """
         Initialize the templates directory and load templates.
         """
-        # if self.templates_dir is None:
-        #     current_file_path = os.path.abspath(__file__)
-        #     package_dir = os.path.dirname(current_file_path)
-        #     self.templates_dir = os.path.join(package_dir, "templates")
         current_file_path = os.path.abspath(__file__)
         package_dir = os.path.dirname(current_file_path)
         

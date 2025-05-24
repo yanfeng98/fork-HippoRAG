@@ -192,23 +192,3 @@ class BaseLLM(ABC):
         """
         
         pass
-        
-        
-# # Example usage
-# if __name__ == "__main__":
-#     config = LLMConfig()
-#     config.batch_upsert({"learning_rate": 0.001, "batch_size": 32})
-#     print(config.to_dict())
-
-#     config.optimizer = "adam"
-#     print(config.to_dict())
-
-#     json_config = config.to_json()
-#     print(json_config)
-
-#     new_config = LLMConfig.from_json(json_config)
-#     print(new_config.to_dict())
-
-#     dict_config = {"dropout": 0.5, "epochs": 10}
-#     another_config = LLMConfig.from_dict(dict_config)
-#     print(another_config.to_dict())

@@ -2,9 +2,8 @@ import os
 import asyncio
 import importlib
 from string import Template
-from typing import Dict, List, Union, Any
 from dataclasses import dataclass, field
-
+from typing import Dict, List, Union, Any
 
 from ..utils.logging_utils import get_logger
 
@@ -28,11 +27,11 @@ class PromptTemplateManager:
         """
         Initialize the templates directory and load templates.
         """
-        current_file_path = os.path.abspath(__file__)
-        package_dir = os.path.dirname(current_file_path)
+        current_file_path: str = os.path.abspath(__file__)
+        package_dir: str = os.path.dirname(current_file_path)
         
         # abs path to dir where each *.py file (exclude __init__.py) contains a variable prompt_template (a str or a chat history with content as raw str for being converted to a Template)
-        self.templates_dir = os.path.join(package_dir, "templates") 
+        self.templates_dir: str = os.path.join(package_dir, "templates") 
 
         self._load_templates()
 
@@ -50,25 +49,21 @@ class PromptTemplateManager:
         logger.info(f"Loading templates from directory: {self.templates_dir}")
         for filename in os.listdir(self.templates_dir):
             if filename.endswith(".py") and filename != "__init__.py":
-                script_name = os.path.splitext(filename)[0]
+                script_name: str = os.path.splitext(filename)[0]
 
                 try:
                     try:
-                        module_name = f"src.hipporag.prompts.templates.{script_name}"
+                        module_name: str = f"src.hipporag.prompts.templates.{script_name}"
                         module = importlib.import_module(module_name)
                     except ModuleNotFoundError:
-                        module_name = f".prompts.templates.{script_name}"
+                        module_name: str = f".prompts.templates.{script_name}"
                         module = importlib.import_module(module_name, 'hipporag')
-
-                    # spec = importlib.util.spec_from_file_location(script_name, script_path)
-                    # module = importlib.util.module_from_spec(spec)
-                    # spec.loader.exec_module(module)
 
                     if not hasattr(module, "prompt_template"):
                         logger.error(f"Module '{module_name}' does not define a 'prompt_template'.")
                         raise AttributeError(f"Module '{module_name}' does not define a 'prompt_template'.")
 
-                    prompt_template = module.prompt_template
+                    prompt_template: list[dict[str, str]] = module.prompt_template
                     logger.debug(f"Loaded template from {module_name}")
                     
                     if isinstance(prompt_template, Template):
@@ -108,7 +103,7 @@ class PromptTemplateManager:
         Raises:
             ValueError: If a required variable is missing.
         """
-        template = self.get_template(name)
+        template: list[dict[str, str|Template]] = self.get_template(name)
         if isinstance(template, Template):
             # Render a single string template
             try:
@@ -121,7 +116,7 @@ class PromptTemplateManager:
         elif isinstance(template, list):
             # Render a chat history
             try:
-                rendered_list = [
+                rendered_list: list[dict[str, str]] = [
                     {"role": item["role"], "content": item["content"].substitute(**kwargs)}
                     for item in template
                 ]
@@ -130,20 +125,6 @@ class PromptTemplateManager:
             except KeyError as e:
                 logger.error(f"Missing variable in chat history template '{name}': {e}")
                 raise ValueError(f"Missing variable in chat history template '{name}': {e}")
-    
-    def sync_render(self, name: str, **kwargs) -> Union[str, List[Dict[str, Any]]]:
-        return asyncio.run(self.render(name, **kwargs))
-
-    def list_template_names(self) -> List[str]:
-        """
-        List all available template names.
-
-        Returns:
-            List[str]: A list of template names.
-        """
-        logger.info("Listing all available template names.")
-        
-        return list(self.templates.keys())
 
     def get_template(self, name: str) -> Union[Template, List[Dict[str, Any]]]:
         """
@@ -164,6 +145,20 @@ class PromptTemplateManager:
         logger.debug(f"Retrieved template '{name}'.")
         
         return self.templates[name]
+
+    def sync_render(self, name: str, **kwargs) -> Union[str, List[Dict[str, Any]]]:
+        return asyncio.run(self.render(name, **kwargs))
+
+    def list_template_names(self) -> List[str]:
+        """
+        List all available template names.
+
+        Returns:
+            List[str]: A list of template names.
+        """
+        logger.info("Listing all available template names.")
+        
+        return list(self.templates.keys())
     
     def print_template(self, name: str) -> None:
         """

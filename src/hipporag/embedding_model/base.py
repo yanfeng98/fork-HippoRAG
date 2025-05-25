@@ -1,19 +1,16 @@
 import json
-from dataclasses import dataclass, field, asdict
-from typing import (
-    Optional,
-    Tuple,
-    Any, 
-    Dict,
-    List
-)
-import numpy as np
+import torch
+import sqlite3
+import hashlib
 import threading
+import numpy as np
 import multiprocessing
+from filelock import FileLock
+from typing import Optional, Any, Dict, List
+from dataclasses import dataclass, field, asdict
 
-
-from ..utils.logging_utils import get_logger
 from ..utils.config_utils import BaseConfig
+from ..utils.logging_utils import get_logger
 
 
 logger = get_logger(__name__)
@@ -86,15 +83,15 @@ class EmbeddingConfig:
         return json.dumps(self._data)
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "LLMConfig":
-        """Create an LLMConfig instance from a dictionary."""
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "EmbeddingConfig":
+        """Create an EmbeddingConfig instance from a dictionary."""
         instance = cls()
         instance.batch_upsert(config_dict)
         return instance
 
     @classmethod
-    def from_json(cls, json_str: str) -> "LLMConfig":
-        """Create an LLMConfig instance from a JSON string."""
+    def from_json(cls, json_str: str) -> "EmbeddingConfig":
+        """Create an EmbeddingConfig instance from a JSON string."""
         instance = cls()
         instance.batch_upsert(json.loads(json_str))
         return instance
@@ -102,13 +99,39 @@ class EmbeddingConfig:
     def __str__(self) -> str:
         """Provide a user-friendly string representation of the configuration."""
         return json.dumps(self._data, indent=4)
-    
 
-from filelock import FileLock
-import sqlite3
-import hashlib
-import os
-import torch
+class BaseEmbeddingModel:
+    global_config: BaseConfig
+    embedding_model_name: str # Class name indicating which embedding model to use.
+    embedding_config: EmbeddingConfig
+    
+    embedding_dim: int # Need subclass to init
+    
+    def __init__(self, global_config: Optional[BaseConfig] = None) -> None:
+        if global_config is None: 
+            logger.debug("global config is not given. Using the default ExperimentConfig instance.")
+            self.global_config = BaseConfig()
+        else: self.global_config = global_config
+        logger.debug(f"Loading {self.__class__.__name__} with global_config: {asdict(self.global_config)}")
+        
+        
+        self.embedding_model_name = self.global_config.embedding_model_name
+
+        logger.debug(f"Init {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
+
+    def batch_encode(self, texts: List[str], **kwargs) -> None:
+        raise NotImplementedError
+    
+    
+    def get_query_doc_scores(self, query_vec: np.ndarray, doc_vecs: np.ndarray):
+        # """
+        # @param query_vec: query vector
+        # @param doc_vecs: doc matrix
+        # @return: a matrix of query-doc scores
+        # """
+        return np.dot(query_vec, doc_vecs.T)
+
+
 def make_cache_embed(encode_func, cache_file_name, device):
     def wrapper(**kwargs):
         # FOCUS_KEYS = ["instruction", "prompts", "max_length"]
@@ -185,39 +208,6 @@ def make_cache_embed(encode_func, cache_file_name, device):
         return torch.stack(final_embeddings)
 
     return wrapper
-    
-class BaseEmbeddingModel:
-    global_config: BaseConfig
-    embedding_model_name: str # Class name indicating which embedding model to use.
-    embedding_config: EmbeddingConfig
-    
-    embedding_dim: int # Need subclass to init
-    
-    def __init__(self, global_config: Optional[BaseConfig] = None) -> None:
-        if global_config is None: 
-            logger.debug("global config is not given. Using the default ExperimentConfig instance.")
-            self.global_config = BaseConfig()
-        else: self.global_config = global_config
-        logger.debug(f"Loading {self.__class__.__name__} with global_config: {asdict(self.global_config)}")
-        
-        
-        self.embedding_model_name = self.global_config.embedding_model_name
-
-        logger.debug(f"Init {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
-
-    def batch_encode(self, texts: List[str], **kwargs) -> None:
-        raise NotImplementedError
-    
-    
-    def get_query_doc_scores(self, query_vec: np.ndarray, doc_vecs: np.ndarray):
-        # """
-        # @param query_vec: query vector
-        # @param doc_vecs: doc matrix
-        # @return: a matrix of query-doc scores
-        # """
-        return np.dot(query_vec, doc_vecs.T)
-    
-
 
 class EmbeddingCache:
     """A multiprocessing-safe global cache for storing embeddings."""

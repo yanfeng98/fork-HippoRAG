@@ -1,14 +1,14 @@
-import json
 import os
-import logging
-from dataclasses import asdict
-from typing import List, Set, Dict, Tuple
-import numpy as np
-from tqdm import tqdm
-import igraph as ig
-from collections import defaultdict
 import re
+import json
 import time
+import logging
+import numpy as np
+import igraph as ig
+from tqdm import tqdm
+from dataclasses import asdict
+from collections import defaultdict
+from typing import List, Set, Dict, Tuple
 
 from .llm import _get_llm_class, CacheOpenAI
 from .embedding_model import _get_embedding_model_class, BaseEmbeddingModel
@@ -23,7 +23,6 @@ from .rerank import DSPyFilter
 from .utils.misc_utils import *
 from .utils.misc_utils import NerRawOutput, TripleRawOutput
 from .utils.embed_utils import retrieve_knn
-from .utils.typing import Triple
 from .utils.config_utils import BaseConfig
 
 logger = logging.getLogger(__name__)
@@ -117,11 +116,11 @@ class HippoRAG:
         self.llm_model: CacheOpenAI = _get_llm_class(self.global_config)
 
         if self.global_config.openie_mode == 'online':
-            self.openie = OpenIE(llm_model=self.llm_model)
+            self.openie: OpenIE = OpenIE(llm_model=self.llm_model)
         elif self.global_config.openie_mode == 'offline':
             self.openie = VLLMOfflineOpenIE(self.global_config)
 
-        self.graph = self.initialize_graph()
+        self.graph: ig.Graph = self.initialize_graph()
 
         if self.global_config.openie_mode == 'offline':
             self.embedding_model = None
@@ -129,32 +128,32 @@ class HippoRAG:
             self.embedding_model: BaseEmbeddingModel = _get_embedding_model_class(
                 embedding_model_name=self.global_config.embedding_model_name)(global_config=self.global_config,
                                                                               embedding_model_name=self.global_config.embedding_model_name)
-        self.chunk_embedding_store = EmbeddingStore(self.embedding_model,
+        self.chunk_embedding_store: EmbeddingStore = EmbeddingStore(self.embedding_model,
                                                     os.path.join(self.working_dir, "chunk_embeddings"),
                                                     self.global_config.embedding_batch_size, 'chunk')
-        self.entity_embedding_store = EmbeddingStore(self.embedding_model,
+        self.entity_embedding_store: EmbeddingStore = EmbeddingStore(self.embedding_model,
                                                      os.path.join(self.working_dir, "entity_embeddings"),
                                                      self.global_config.embedding_batch_size, 'entity')
-        self.fact_embedding_store = EmbeddingStore(self.embedding_model,
+        self.fact_embedding_store: EmbeddingStore = EmbeddingStore(self.embedding_model,
                                                    os.path.join(self.working_dir, "fact_embeddings"),
                                                    self.global_config.embedding_batch_size, 'fact')
 
-        self.prompt_template_manager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
+        self.prompt_template_manager: PromptTemplateManager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
 
-        self.openie_results_path = os.path.join(self.global_config.save_dir,f'openie_results_ner_{self.global_config.llm_name.replace("/", "_")}.json')
+        self.openie_results_path: str = os.path.join(self.global_config.save_dir,f'openie_results_ner_{self.global_config.llm_name.replace("/", "_")}.json')
 
-        self.rerank_filter = DSPyFilter(self)
+        self.rerank_filter: DSPyFilter = DSPyFilter(self)
 
-        self.ready_to_retrieve = False
+        self.ready_to_retrieve: bool = False
 
-        self.ppr_time = 0
-        self.rerank_time = 0
-        self.all_retrieval_time = 0
+        self.ppr_time: int = 0
+        self.rerank_time: int = 0
+        self.all_retrieval_time: int = 0
 
         self.ent_node_to_chunk_ids = None
 
 
-    def initialize_graph(self):
+    def initialize_graph(self) -> ig.Graph:
         """
         Initializes a graph using a Pickle file if available or creates a new graph.
 
@@ -187,6 +186,67 @@ class HippoRAG:
             )
             return preloaded_graph
 
+    def index(self, docs: List[str]):
+        """
+        Indexes the given documents based on the HippoRAG 2 framework which generates an OpenIE knowledge graph
+        based on the given documents and encodes passages, entities and facts separately for later retrieval.
+
+        Parameters:
+            docs : List[str]
+                A list of documents to be indexed.
+        """
+
+        logger.info(f"Indexing Documents")
+        logger.info(f"Performing OpenIE")
+
+        if self.global_config.openie_mode == 'offline':
+            self.pre_openie(docs)
+
+        self.chunk_embedding_store.insert_strings(docs)
+        chunk_to_rows: dict[str, dict[str, str]] = self.chunk_embedding_store.get_all_id_to_rows()
+
+        all_openie_info, chunk_keys_to_process = self.load_existing_openie(chunk_to_rows.keys())
+        new_openie_rows: dict[str, dict[str, str]] = {k : chunk_to_rows[k] for k in chunk_keys_to_process}
+
+        if len(chunk_keys_to_process) > 0:
+            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
+            self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
+
+        if self.global_config.save_openie:
+            self.save_openie_results(all_openie_info)
+
+        ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
+
+        assert len(chunk_to_rows) == len(ner_results_dict) == len(triple_results_dict)
+
+        # prepare data_store
+        chunk_ids: list[str] = list(chunk_to_rows.keys())
+
+        chunk_triples: list[list[list[str]]] = [[text_processing(t) for t in triple_results_dict[chunk_id].triples] for chunk_id in chunk_ids]
+        entity_nodes, chunk_triple_entities = extract_entity_nodes(chunk_triples)
+        facts: List[Triple] = flatten_facts(chunk_triples)
+
+        logger.info(f"Encoding Entities")
+        self.entity_embedding_store.insert_strings(entity_nodes)
+
+        logger.info(f"Encoding Facts")
+        self.fact_embedding_store.insert_strings([str(fact) for fact in facts])
+
+        logger.info(f"Constructing Graph")
+
+        self.node_to_node_stats: dict[tuple[str, str], float] = {}
+        self.ent_node_to_chunk_ids: dict[str, set[str]] = {}
+
+        self.add_fact_edges(chunk_ids, chunk_triples)
+        num_new_chunks: int = self.add_passage_edges(chunk_ids, chunk_triple_entities)
+
+        if num_new_chunks > 0:
+            logger.info(f"Found {num_new_chunks} new chunks to save into graph.")
+            self.add_synonymy_edges()
+
+            self.augment_graph()
+            self.save_igraph()
+
     def pre_openie(self,  docs: List[str]):
         logger.info(f"Indexing Documents")
         logger.info(f"Performing OpenIE Offline")
@@ -205,67 +265,216 @@ class HippoRAG:
 
         assert False, logger.info('Done with OpenIE, run online indexing for future retrieval.')
 
-    def index(self, docs: List[str]):
+    def load_existing_openie(self, chunk_keys: List[str]) -> Tuple[List[dict], Set[str]]:
         """
-        Indexes the given documents based on the HippoRAG 2 framework which generates an OpenIE knowledge graph
-        based on the given documents and encodes passages, entities and facts separately for later retrieval.
+        Loads existing OpenIE results from the specified file if it exists and combines
+        them with new content while standardizing indices. If the file does not exist or
+        is configured to be re-initialized from scratch with the flag `force_openie_from_scratch`,
+        it prepares new entries for processing.
+
+        Args:
+            chunk_keys (List[str]): A list of chunk keys that represent identifiers
+                                     for the content to be processed.
+
+        Returns:
+            Tuple[List[dict], Set[str]]: A tuple where the first element is the existing OpenIE
+                                         information (if any) loaded from the file, and the
+                                         second element is a set of chunk keys that still need to
+                                         be saved or processed.
+        """
+
+        # combine openie_results with contents already in file, if file exists
+        chunk_keys_to_save: set = set()
+
+        if not self.global_config.force_openie_from_scratch and os.path.isfile(self.openie_results_path):
+            openie_results = json.load(open(self.openie_results_path))
+            all_openie_info = openie_results.get('docs', [])
+
+            #Standardizing indices for OpenIE Files.
+
+            renamed_openie_info = []
+            for openie_info in all_openie_info:
+                openie_info['idx'] = compute_mdhash_id(openie_info['passage'], 'chunk-')
+                renamed_openie_info.append(openie_info)
+
+            all_openie_info = renamed_openie_info
+
+            existing_openie_keys = set([info['idx'] for info in all_openie_info])
+
+            for chunk_key in chunk_keys:
+                if chunk_key not in existing_openie_keys:
+                    chunk_keys_to_save.add(chunk_key)
+        else:
+            all_openie_info: list[dict] = []
+            chunk_keys_to_save: set[str] = chunk_keys
+
+        return all_openie_info, chunk_keys_to_save
+
+    def merge_openie_results(self,
+                             all_openie_info: List[dict],
+                             chunks_to_save: Dict[str, dict],
+                             ner_results_dict: Dict[str, NerRawOutput],
+                             triple_results_dict: Dict[str, TripleRawOutput]) -> List[dict[str, Any]]:
+        """
+        Merges OpenIE extraction results with corresponding passage and metadata.
+
+        This function integrates the OpenIE extraction results, including named-entity
+        recognition (NER) entities and triples, with their respective text passages
+        using the provided chunk keys. The resulting merged data is appended to
+        the `all_openie_info` list containing dictionaries with combined and organized
+        data for further processing or storage.
 
         Parameters:
-            docs : List[str]
-                A list of documents to be indexed.
+            all_openie_info (List[dict]): A list to hold dictionaries of merged OpenIE
+                results and metadata for all chunks.
+            chunks_to_save (Dict[str, dict]): A dict of chunk identifiers (keys) to process
+                and merge OpenIE results to dictionaries with `hash_id` and `content` keys.
+            ner_results_dict (Dict[str, NerRawOutput]): A dictionary mapping chunk keys
+                to their corresponding NER extraction results.
+            triple_results_dict (Dict[str, TripleRawOutput]): A dictionary mapping chunk
+                keys to their corresponding OpenIE triple extraction results.
+
+        Returns:
+            List[dict]: The `all_openie_info` list containing dictionaries with merged
+            OpenIE results, metadata, and the passage content for each chunk.
+
         """
 
-        logger.info(f"Indexing Documents")
+        for chunk_key, row in chunks_to_save.items():
+            passage: str = row['content']
+            chunk_openie_info: dict[str, Any] = {'idx': chunk_key, 'passage': passage,
+                                 'extracted_entities': ner_results_dict[chunk_key].unique_entities,
+                                 'extracted_triples': triple_results_dict[chunk_key].triples}
+            all_openie_info.append(chunk_openie_info)
 
-        logger.info(f"Performing OpenIE")
+        return all_openie_info
 
-        if self.global_config.openie_mode == 'offline':
-            self.pre_openie(docs)
+    def save_openie_results(self, all_openie_info: List[dict[str, Any]]):
+        """
+        Computes statistics on extracted entities from OpenIE results and saves the aggregated data in a
+        JSON file. The function calculates the average character and word lengths of the extracted entities
+        and writes them along with the provided OpenIE information to a file.
 
-        self.chunk_embedding_store.insert_strings(docs)
-        chunk_to_rows = self.chunk_embedding_store.get_all_id_to_rows()
+        Parameters:
+            all_openie_info : List[dict]
+                List of dictionaries, where each dictionary represents information from OpenIE, including
+                extracted entities.
+        """
 
-        all_openie_info, chunk_keys_to_process = self.load_existing_openie(chunk_to_rows.keys())
-        new_openie_rows = {k : chunk_to_rows[k] for k in chunk_keys_to_process}
+        sum_phrase_chars: int = sum([len(e) for chunk in all_openie_info for e in chunk['extracted_entities']])
+        sum_phrase_words: int = sum([len(e.split()) for chunk in all_openie_info for e in chunk['extracted_entities']])
+        num_phrases: int = sum([len(chunk['extracted_entities']) for chunk in all_openie_info])
 
-        if len(chunk_keys_to_process) > 0:
-            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
-            self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
+        if len(all_openie_info) > 0:
+            # Avoid division by zero if there are no phrases
+            if num_phrases > 0:
+                avg_ent_chars: float = round(sum_phrase_chars / num_phrases, 4)
+                avg_ent_words: float = round(sum_phrase_words / num_phrases, 4)
+            else:
+                avg_ent_chars: float = 0
+                avg_ent_words: float = 0
 
-        if self.global_config.save_openie:
-            self.save_openie_results(all_openie_info)
+            openie_dict: dict[str, float|list[dict[str, Any]]] = {
+                'docs': all_openie_info,
+                'avg_ent_chars': avg_ent_chars,
+                'avg_ent_words': avg_ent_words
+            }
 
-        ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
+            with open(self.openie_results_path, 'w') as f:
+                json.dump(openie_dict, f)
+            logger.info(f"OpenIE results saved to {self.openie_results_path}")
 
-        assert len(chunk_to_rows) == len(ner_results_dict) == len(triple_results_dict)
+    def add_fact_edges(self, chunk_ids: List[str], chunk_triples: list[list[list[str]]]):
+        """
+        Adds fact edges from given triples to the graph.
 
-        # prepare data_store
-        chunk_ids = list(chunk_to_rows.keys())
+        The method processes chunks of triples, computes unique identifiers
+        for entities and relations, and updates various internal statistics
+        to build and maintain the graph structure. Entities are uniquely
+        identified and linked based on their relationships.
 
-        chunk_triples = [[text_processing(t) for t in triple_results_dict[chunk_id].triples] for chunk_id in chunk_ids]
-        entity_nodes, chunk_triple_entities = extract_entity_nodes(chunk_triples)
-        facts = flatten_facts(chunk_triples)
+        Parameters:
+            chunk_ids: List[str]
+                A list of unique identifiers for the chunks being processed.
+            chunk_triples: List[Tuple]
+                A list of tuples representing triples to process. Each triple
+                consists of a subject, predicate, and object.
 
-        logger.info(f"Encoding Entities")
-        self.entity_embedding_store.insert_strings(entity_nodes)
+        Raises:
+            Does not explicitly raise exceptions within the provided function logic.
+        """
 
-        logger.info(f"Encoding Facts")
-        self.fact_embedding_store.insert_strings([str(fact) for fact in facts])
+        if "name" in self.graph.vs:
+            current_graph_nodes = set(self.graph.vs["name"])
+        else:
+            current_graph_nodes = set()
 
-        logger.info(f"Constructing Graph")
+        logger.info(f"Adding OpenIE triples to graph.")
 
-        self.node_to_node_stats = {}
-        self.ent_node_to_chunk_ids = {}
+        for chunk_key, triples in tqdm(zip(chunk_ids, chunk_triples)):
+            entities_in_chunk: set[str] = set()
 
-        self.add_fact_edges(chunk_ids, chunk_triples)
-        num_new_chunks = self.add_passage_edges(chunk_ids, chunk_triple_entities)
+            if chunk_key not in current_graph_nodes:
+                for triple in triples:
+                    triple: tuple[str, str, str] = tuple(triple)
 
-        if num_new_chunks > 0:
-            logger.info(f"Found {num_new_chunks} new chunks to save into graph.")
-            self.add_synonymy_edges()
+                    node_key: str = compute_mdhash_id(content=triple[0], prefix=("entity-"))
+                    node_2_key: str = compute_mdhash_id(content=triple[2], prefix=("entity-"))
 
-            self.augment_graph()
-            self.save_igraph()
+                    self.node_to_node_stats[(node_key, node_2_key)] = self.node_to_node_stats.get(
+                        (node_key, node_2_key), 0.0) + 1
+                    self.node_to_node_stats[(node_2_key, node_key)] = self.node_to_node_stats.get(
+                        (node_2_key, node_key), 0.0) + 1
+
+                    entities_in_chunk.add(node_key)
+                    entities_in_chunk.add(node_2_key)
+
+                for node in entities_in_chunk:
+                    self.ent_node_to_chunk_ids[node] = self.ent_node_to_chunk_ids.get(node, set()).union(set([chunk_key]))
+
+    def add_passage_edges(self, chunk_ids: List[str], chunk_triple_entities: List[List[str]]) -> int:
+        """
+        Adds edges connecting passage nodes to phrase nodes in the graph.
+
+        This method is responsible for iterating through a list of chunk identifiers
+        and their corresponding triple entities. It calculates and adds new edges
+        between the passage nodes (defined by the chunk identifiers) and the phrase
+        nodes (defined by the computed unique hash IDs of triple entities). The method
+        also updates the node-to-node statistics map and keeps count of newly added
+        passage nodes.
+
+        Parameters:
+            chunk_ids : List[str]
+                A list of identifiers representing passage nodes in the graph.
+            chunk_triple_entities : List[List[str]]
+                A list of lists where each sublist contains entities (strings) associated
+                with the corresponding chunk in the chunk_ids list.
+
+        Returns:
+            int
+                The number of new passage nodes added to the graph.
+        """
+
+        if "name" in self.graph.vs.attribute_names():
+            current_graph_nodes = set(self.graph.vs["name"])
+        else:
+            current_graph_nodes = set()
+
+        num_new_chunks: int = 0
+
+        logger.info(f"Connecting passage nodes to phrase nodes.")
+
+        for idx, chunk_key in tqdm(enumerate(chunk_ids)):
+
+            if chunk_key not in current_graph_nodes:
+                for chunk_ent in chunk_triple_entities[idx]:
+                    node_key = compute_mdhash_id(chunk_ent, prefix="entity-")
+
+                    self.node_to_node_stats[(chunk_key, node_key)] = 1.0
+
+                num_new_chunks += 1
+
+        return num_new_chunks
 
     def delete(self, docs_to_delete: List[str]):
         """
@@ -716,97 +925,8 @@ class HippoRAG:
 
         return queries_solutions, all_response_message, all_metadata
 
-    def add_fact_edges(self, chunk_ids: List[str], chunk_triples: List[Tuple]):
-        """
-        Adds fact edges from given triples to the graph.
 
-        The method processes chunks of triples, computes unique identifiers
-        for entities and relations, and updates various internal statistics
-        to build and maintain the graph structure. Entities are uniquely
-        identified and linked based on their relationships.
 
-        Parameters:
-            chunk_ids: List[str]
-                A list of unique identifiers for the chunks being processed.
-            chunk_triples: List[Tuple]
-                A list of tuples representing triples to process. Each triple
-                consists of a subject, predicate, and object.
-
-        Raises:
-            Does not explicitly raise exceptions within the provided function logic.
-        """
-
-        if "name" in self.graph.vs:
-            current_graph_nodes = set(self.graph.vs["name"])
-        else:
-            current_graph_nodes = set()
-
-        logger.info(f"Adding OpenIE triples to graph.")
-
-        for chunk_key, triples in tqdm(zip(chunk_ids, chunk_triples)):
-            entities_in_chunk = set()
-
-            if chunk_key not in current_graph_nodes:
-                for triple in triples:
-                    triple = tuple(triple)
-
-                    node_key = compute_mdhash_id(content=triple[0], prefix=("entity-"))
-                    node_2_key = compute_mdhash_id(content=triple[2], prefix=("entity-"))
-
-                    self.node_to_node_stats[(node_key, node_2_key)] = self.node_to_node_stats.get(
-                        (node_key, node_2_key), 0.0) + 1
-                    self.node_to_node_stats[(node_2_key, node_key)] = self.node_to_node_stats.get(
-                        (node_2_key, node_key), 0.0) + 1
-
-                    entities_in_chunk.add(node_key)
-                    entities_in_chunk.add(node_2_key)
-
-                for node in entities_in_chunk:
-                    self.ent_node_to_chunk_ids[node] = self.ent_node_to_chunk_ids.get(node, set()).union(set([chunk_key]))
-
-    def add_passage_edges(self, chunk_ids: List[str], chunk_triple_entities: List[List[str]]):
-        """
-        Adds edges connecting passage nodes to phrase nodes in the graph.
-
-        This method is responsible for iterating through a list of chunk identifiers
-        and their corresponding triple entities. It calculates and adds new edges
-        between the passage nodes (defined by the chunk identifiers) and the phrase
-        nodes (defined by the computed unique hash IDs of triple entities). The method
-        also updates the node-to-node statistics map and keeps count of newly added
-        passage nodes.
-
-        Parameters:
-            chunk_ids : List[str]
-                A list of identifiers representing passage nodes in the graph.
-            chunk_triple_entities : List[List[str]]
-                A list of lists where each sublist contains entities (strings) associated
-                with the corresponding chunk in the chunk_ids list.
-
-        Returns:
-            int
-                The number of new passage nodes added to the graph.
-        """
-
-        if "name" in self.graph.vs.attribute_names():
-            current_graph_nodes = set(self.graph.vs["name"])
-        else:
-            current_graph_nodes = set()
-
-        num_new_chunks = 0
-
-        logger.info(f"Connecting passage nodes to phrase nodes.")
-
-        for idx, chunk_key in tqdm(enumerate(chunk_ids)):
-
-            if chunk_key not in current_graph_nodes:
-                for chunk_ent in chunk_triple_entities[idx]:
-                    node_key = compute_mdhash_id(chunk_ent, prefix="entity-")
-
-                    self.node_to_node_stats[(chunk_key, node_key)] = 1.0
-
-                num_new_chunks += 1
-
-        return num_new_chunks
 
     def add_synonymy_edges(self):
         """
@@ -870,125 +990,6 @@ class HippoRAG:
                         num_nns += 1
 
             synonym_candidates.append((node_key, synonyms))
-
-    def load_existing_openie(self, chunk_keys: List[str]) -> Tuple[List[dict], Set[str]]:
-        """
-        Loads existing OpenIE results from the specified file if it exists and combines
-        them with new content while standardizing indices. If the file does not exist or
-        is configured to be re-initialized from scratch with the flag `force_openie_from_scratch`,
-        it prepares new entries for processing.
-
-        Args:
-            chunk_keys (List[str]): A list of chunk keys that represent identifiers
-                                     for the content to be processed.
-
-        Returns:
-            Tuple[List[dict], Set[str]]: A tuple where the first element is the existing OpenIE
-                                         information (if any) loaded from the file, and the
-                                         second element is a set of chunk keys that still need to
-                                         be saved or processed.
-        """
-
-        # combine openie_results with contents already in file, if file exists
-        chunk_keys_to_save = set()
-
-        if not self.global_config.force_openie_from_scratch and os.path.isfile(self.openie_results_path):
-            openie_results = json.load(open(self.openie_results_path))
-            all_openie_info = openie_results.get('docs', [])
-
-            #Standardizing indices for OpenIE Files.
-
-            renamed_openie_info = []
-            for openie_info in all_openie_info:
-                openie_info['idx'] = compute_mdhash_id(openie_info['passage'], 'chunk-')
-                renamed_openie_info.append(openie_info)
-
-            all_openie_info = renamed_openie_info
-
-            existing_openie_keys = set([info['idx'] for info in all_openie_info])
-
-            for chunk_key in chunk_keys:
-                if chunk_key not in existing_openie_keys:
-                    chunk_keys_to_save.add(chunk_key)
-        else:
-            all_openie_info = []
-            chunk_keys_to_save = chunk_keys
-
-        return all_openie_info, chunk_keys_to_save
-
-    def merge_openie_results(self,
-                             all_openie_info: List[dict],
-                             chunks_to_save: Dict[str, dict],
-                             ner_results_dict: Dict[str, NerRawOutput],
-                             triple_results_dict: Dict[str, TripleRawOutput]) -> List[dict]:
-        """
-        Merges OpenIE extraction results with corresponding passage and metadata.
-
-        This function integrates the OpenIE extraction results, including named-entity
-        recognition (NER) entities and triples, with their respective text passages
-        using the provided chunk keys. The resulting merged data is appended to
-        the `all_openie_info` list containing dictionaries with combined and organized
-        data for further processing or storage.
-
-        Parameters:
-            all_openie_info (List[dict]): A list to hold dictionaries of merged OpenIE
-                results and metadata for all chunks.
-            chunks_to_save (Dict[str, dict]): A dict of chunk identifiers (keys) to process
-                and merge OpenIE results to dictionaries with `hash_id` and `content` keys.
-            ner_results_dict (Dict[str, NerRawOutput]): A dictionary mapping chunk keys
-                to their corresponding NER extraction results.
-            triple_results_dict (Dict[str, TripleRawOutput]): A dictionary mapping chunk
-                keys to their corresponding OpenIE triple extraction results.
-
-        Returns:
-            List[dict]: The `all_openie_info` list containing dictionaries with merged
-            OpenIE results, metadata, and the passage content for each chunk.
-
-        """
-
-        for chunk_key, row in chunks_to_save.items():
-            passage = row['content']
-            chunk_openie_info = {'idx': chunk_key, 'passage': passage,
-                                 'extracted_entities': ner_results_dict[chunk_key].unique_entities,
-                                 'extracted_triples': triple_results_dict[chunk_key].triples}
-            all_openie_info.append(chunk_openie_info)
-
-        return all_openie_info
-
-    def save_openie_results(self, all_openie_info: List[dict]):
-        """
-        Computes statistics on extracted entities from OpenIE results and saves the aggregated data in a
-        JSON file. The function calculates the average character and word lengths of the extracted entities
-        and writes them along with the provided OpenIE information to a file.
-
-        Parameters:
-            all_openie_info : List[dict]
-                List of dictionaries, where each dictionary represents information from OpenIE, including
-                extracted entities.
-        """
-
-        sum_phrase_chars = sum([len(e) for chunk in all_openie_info for e in chunk['extracted_entities']])
-        sum_phrase_words = sum([len(e.split()) for chunk in all_openie_info for e in chunk['extracted_entities']])
-        num_phrases = sum([len(chunk['extracted_entities']) for chunk in all_openie_info])
-
-        if len(all_openie_info) > 0:
-            # Avoid division by zero if there are no phrases
-            if num_phrases > 0:
-                avg_ent_chars = round(sum_phrase_chars / num_phrases, 4)
-                avg_ent_words = round(sum_phrase_words / num_phrases, 4)
-            else:
-                avg_ent_chars = 0
-                avg_ent_words = 0
-
-            openie_dict = {
-                'docs': all_openie_info,
-                'avg_ent_chars': avg_ent_chars,
-                'avg_ent_words': avg_ent_words
-            }
-
-            with open(self.openie_results_path, 'w') as f:
-                json.dump(openie_dict, f)
-            logger.info(f"OpenIE results saved to {self.openie_results_path}")
 
     def augment_graph(self):
         """

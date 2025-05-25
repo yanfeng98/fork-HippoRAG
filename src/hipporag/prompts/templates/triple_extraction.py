@@ -1,7 +1,7 @@
 from .ner import one_shot_ner_paragraph, one_shot_ner_output
 from ...utils.llm_utils import convert_format_to_template
 
-ner_conditioned_re_system = """Your task is to construct an RDF (Resource Description Framework) graph from the given passages and named entity lists. 
+ner_conditioned_re_system: str = """Your task is to construct an RDF (Resource Description Framework) graph from the given passages and named entity lists. 
 Respond with a JSON list of triples, with each triple representing a relationship in the RDF graph. 
 
 Pay attention to the following requirements:
@@ -11,7 +11,7 @@ Pay attention to the following requirements:
 """
 
 
-ner_conditioned_re_frame = """Convert the paragraph into a JSON dict, it has a named entity list and a triple list.
+ner_conditioned_re_frame: str = """Convert the paragraph into a JSON dict, it has a named entity list and a triple list.
 Paragraph:
 ```
 {passage}
@@ -21,10 +21,10 @@ Paragraph:
 """
 
 
-ner_conditioned_re_input = ner_conditioned_re_frame.format(passage=one_shot_ner_paragraph, named_entity_json=one_shot_ner_output)
+ner_conditioned_re_input: str = ner_conditioned_re_frame.format(passage=one_shot_ner_paragraph, named_entity_json=one_shot_ner_output)
 
 
-ner_conditioned_re_output = """{"triples": [
+ner_conditioned_re_output: str = """{"triples": [
             ["Radio City", "located in", "India"],
             ["Radio City", "is", "private FM radio station"],
             ["Radio City", "started on", "3 July 2001"],
@@ -42,7 +42,7 @@ ner_conditioned_re_output = """{"triples": [
 """
 
 
-prompt_template = [
+prompt_template: list[dict[str, str]] = [
     {"role": "system", "content": ner_conditioned_re_system},
     {"role": "user", "content": ner_conditioned_re_input},
     {"role": "assistant", "content": ner_conditioned_re_output},

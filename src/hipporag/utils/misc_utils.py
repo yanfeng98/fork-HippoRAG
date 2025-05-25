@@ -1,10 +1,10 @@
-from argparse import ArgumentTypeError
-from dataclasses import dataclass
-from hashlib import md5
-from typing import Dict, Any, List, Tuple, Literal, Union, Optional
-import numpy as np
 import re
 import logging
+import numpy as np
+from hashlib import md5
+from dataclasses import dataclass
+from argparse import ArgumentTypeError
+from typing import Dict, Any, List, Literal, Optional
 
 from .typing import Triple
 from .llm_utils import filter_invalid_triples
@@ -51,16 +51,22 @@ class QuerySolution:
             "gold_docs": self.gold_docs,
         }
 
-def text_processing(text):
-    if isinstance(text, list):
-        return [text_processing(t) for t in text]
-    if not isinstance(text, str):
-        text = str(text)
-    return re.sub('[^A-Za-z0-9 ]', ' ', text.lower()).strip()
+def compute_mdhash_id(content: str, prefix: str = "") -> str:
+    """
+    Compute the MD5 hash of the given content string and optionally prepend a prefix.
 
-def reformat_openie_results(corpus_openie_results) -> (Dict[str, NerRawOutput], Dict[str, TripleRawOutput]):
+    Args:
+        content (str): The input string to be hashed.
+        prefix (str, optional): A string to prepend to the resulting hash. Defaults to an empty string.
 
-    ner_output_dict = {
+    Returns:
+        str: A string consisting of the prefix followed by the hexadecimal representation of the MD5 hash.
+    """
+    return prefix + md5(content.encode()).hexdigest()
+
+def reformat_openie_results(corpus_openie_results: list[dict[str, Any]]) -> tuple[Dict[str, NerRawOutput], Dict[str, TripleRawOutput]]:
+
+    ner_output_dict: dict[str, NerRawOutput] = {
         chunk_item['idx']: NerRawOutput(
             chunk_id=chunk_item['idx'],
             response=None,
@@ -69,7 +75,7 @@ def reformat_openie_results(corpus_openie_results) -> (Dict[str, NerRawOutput], 
         )
         for chunk_item in corpus_openie_results
     }
-    triple_output_dict = {
+    triple_output_dict: dict[str, TripleRawOutput] = {
         chunk_item['idx']: TripleRawOutput(
             chunk_id=chunk_item['idx'],
             response=None,
@@ -81,21 +87,28 @@ def reformat_openie_results(corpus_openie_results) -> (Dict[str, NerRawOutput], 
 
     return ner_output_dict, triple_output_dict
 
-def extract_entity_nodes(chunk_triples: List[List[Triple]]) -> (List[str], List[List[str]]):
-    chunk_triple_entities = []  # a list of lists of unique entities from each chunk's triples
+def text_processing(text: str|list[str]) -> str|list[str]:
+    if isinstance(text, list):
+        return [text_processing(t) for t in text]
+    if not isinstance(text, str):
+        text: str = str(text)
+    return re.sub('[^A-Za-z0-9 ]', ' ', text.lower()).strip()
+
+def extract_entity_nodes(chunk_triples: List[List[Triple]]) -> tuple[List[str], List[List[str]]]:
+    chunk_triple_entities: list[list[str]] = []  # a list of lists of unique entities from each chunk's triples
     for triples in chunk_triples:
-        triple_entities = set()
+        triple_entities: set[list[str]] = set()
         for t in triples:
             if len(t) == 3:
                 triple_entities.update([t[0], t[2]])
             else:
                 logger.warning(f"During graph construction, invalid triple is found: {t}")
         chunk_triple_entities.append(list(triple_entities))
-    graph_nodes = list(np.unique([ent for ents in chunk_triple_entities for ent in ents]))
+    graph_nodes: list[str] = list(np.unique([ent for ents in chunk_triple_entities for ent in ents]))
     return graph_nodes, chunk_triple_entities
 
-def flatten_facts(chunk_triples: List[Triple]) -> List[Triple]:
-    graph_triples = []  # a list of unique relation triple (in tuple) from all chunks
+def flatten_facts(chunk_triples: List[List[Triple]]) -> List[Triple]:
+    graph_triples: list[tuple[str, str, str]] = []  # a list of unique relation triple (in tuple) from all chunks
     for triples in chunk_triples:
         graph_triples.extend([tuple(t) for t in triples])
     graph_triples = list(set(graph_triples))
@@ -111,20 +124,6 @@ def min_max_normalize(x):
         return np.ones_like(x)  # Return an array of ones with the same shape as x
     
     return (x - min_val) / range_val
-
-def compute_mdhash_id(content: str, prefix: str = "") -> str:
-    """
-    Compute the MD5 hash of the given content string and optionally prepend a prefix.
-
-    Args:
-        content (str): The input string to be hashed.
-        prefix (str, optional): A string to prepend to the resulting hash. Defaults to an empty string.
-
-    Returns:
-        str: A string consisting of the prefix followed by the hexadecimal representation of the MD5 hash.
-    """
-    return prefix + md5(content.encode()).hexdigest()
-
 
 def all_values_of_same_length(data: dict) -> bool:
     """

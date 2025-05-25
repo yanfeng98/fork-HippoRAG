@@ -9,7 +9,7 @@ from ..utils.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-def _get_embedding_model_class(embedding_model_name: str = "nvidia/NV-Embed-v2"):
+def _get_embedding_model_class(embedding_model_name: str = "nvidia/NV-Embed-v2") -> type[BaseEmbeddingModel]:
     if "GritLM" in embedding_model_name:
         return GritLMEmbeddingModel
     elif "NV-Embed-v2" in embedding_model_name:

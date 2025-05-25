@@ -1,16 +1,15 @@
-from copy import deepcopy
-from typing import List, Optional
-
-import numpy as np
 import torch
+import numpy as np
 from tqdm import tqdm
-from transformers import AutoModel
 from openai import OpenAI
+from copy import deepcopy
 from openai import AzureOpenAI
+from typing import List, Optional, Any
+from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from ..utils.config_utils import BaseConfig
 from ..utils.logging_utils import get_logger
-from .base import BaseEmbeddingModel, EmbeddingConfig, make_cache_embed
+from .base import BaseEmbeddingModel, EmbeddingConfig
 
 logger = get_logger(__name__)
 
@@ -20,7 +19,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
         super().__init__(global_config=global_config)
 
         if embedding_model_name is not None:
-            self.embedding_model_name = embedding_model_name
+            self.embedding_model_name: str = embedding_model_name
             logger.debug(
                 f"Overriding {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
 
@@ -47,7 +46,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             None
         """
 
-        config_dict = {
+        config_dict: dict[str, Any] = {
             "embedding_model_name": self.embedding_model_name,
             "norm": self.global_config.embedding_return_as_normalized,
             # "max_seq_length": self.global_config.embedding_max_seq_len,
@@ -67,51 +66,50 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             },
         }
 
-        self.embedding_config = EmbeddingConfig.from_dict(config_dict=config_dict)
+        self.embedding_config: EmbeddingConfig = EmbeddingConfig.from_dict(config_dict=config_dict)
         logger.debug(f"Init {self.__class__.__name__}'s embedding_config: {self.embedding_config}")
 
-    def encode(self, texts: List[str]):
-        texts = [t.replace("\n", " ") for t in texts]
-        texts = [t if t != '' else ' ' for t in texts]
-        response = self.client.embeddings.create(input=texts, model=self.embedding_model_name)
-        results = np.array([v.embedding for v in response.data])
-
-        return results
-
-    def batch_encode(self, texts: List[str], **kwargs) -> None:
+    def batch_encode(self, texts: List[str], **kwargs) -> np.ndarray:
         if isinstance(texts, str): texts = [texts]
 
-        params = deepcopy(self.embedding_config.encode_params)
+        params: dict[str, Any] = deepcopy(self.embedding_config.encode_params)
         if kwargs: params.update(kwargs)
 
         if "instruction" in kwargs:
             if kwargs["instruction"] != '':
                 params["instruction"] = f"Instruct: {kwargs['instruction']}\nQuery: "
-            # del params["instruction"]
 
         logger.debug(f"Calling {self.__class__.__name__} with:\n{params}")
 
-        batch_size = params.pop("batch_size", 16)
+        batch_size: int = params.pop("batch_size", 16)
 
         if len(texts) <= batch_size:
-            results = self.encode(texts)
+            results: np.ndarray = self.encode(texts)
         else:
             pbar = tqdm(total=len(texts), desc="Batch Encoding")
-            results = []
+            results: list[np.ndarray] = []
             for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
+                batch: list[str] = texts[i:i + batch_size]
                 try:
                     results.append(self.encode(batch))
                 except:
                     import ipdb; ipdb.set_trace()
                 pbar.update(batch_size)
             pbar.close()
-            results = np.concatenate(results)
+            results: np.ndarray = np.concatenate(results)
 
         if isinstance(results, torch.Tensor):
-            results = results.cpu()
-            results = results.numpy()
+            results: torch.Tensor = results.cpu()
+            results: np.ndarray = results.numpy()
         if self.embedding_config.norm:
-            results = (results.T / np.linalg.norm(results, axis=1)).T
+            results: np.ndarray = (results.T / np.linalg.norm(results, axis=1)).T
+
+        return results
+
+    def encode(self, texts: List[str]) -> np.ndarray:
+        texts: list[str] = [t.replace("\n", " ") for t in texts]
+        texts: list[str] = [t if t != '' else ' ' for t in texts]
+        response: CreateEmbeddingResponse = self.client.embeddings.create(input=texts, model=self.embedding_model_name)
+        results: np.ndarray = np.array([v.embedding for v in response.data])
 
         return results

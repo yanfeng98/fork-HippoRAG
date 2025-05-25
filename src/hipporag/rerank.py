@@ -1,11 +1,11 @@
-import json
-import difflib
-from pydantic import BaseModel, Field, TypeAdapter
-from openai import OpenAI
-from copy import deepcopy
-from typing import Union, Optional, List, Dict, Any, Tuple, Literal
 import re
 import ast
+import json
+import difflib
+from copy import deepcopy
+from typing import List, Tuple, Any, Callable
+from pydantic import BaseModel, Field, TypeAdapter
+
 from .prompts.filter_default_prompt import best_dspy_prompt
 
 class Fact(BaseModel):
@@ -13,7 +13,7 @@ class Fact(BaseModel):
 
 
 class DSPyFilter:
-    def __init__(self, hipporag):
+    def __init__(self, hipporag: 'HippoRAG'):
         """
         Initializes the object with the necessary configurations and templates for processing input and output messages.
 
@@ -29,25 +29,25 @@ class DSPyFilter:
         model_name : The name of the language model as specified in the global configuration.
         default_gen_kwargs : A dictionary for storing the default generation keyword arguments.
         """
-        dspy_file_path = hipporag.global_config.rerank_dspy_file_path
-        self.one_input_template = """[[ ## question ## ]]\n{question}\n\n[[ ## fact_before_filter ## ]]\n{fact_before_filter}\n\nRespond with the corresponding output fields, starting with the field `[[ ## fact_after_filter ## ]]` (must be formatted as a valid Python Fact), and then ending with the marker for `[[ ## completed ## ]]`."""
-        self.one_output_template = """[[ ## fact_after_filter ## ]]\n{fact_after_filter}\n\n[[ ## completed ## ]]"""
-        self.message_template = self.make_template(dspy_file_path)
-        self.llm_infer_fn = hipporag.llm_model.infer
-        self.model_name = hipporag.global_config.llm_name
-        self.default_gen_kwargs = {}
+        dspy_file_path: str = hipporag.global_config.rerank_dspy_file_path
+        self.one_input_template: str = """[[ ## question ## ]]\n{question}\n\n[[ ## fact_before_filter ## ]]\n{fact_before_filter}\n\nRespond with the corresponding output fields, starting with the field `[[ ## fact_after_filter ## ]]` (must be formatted as a valid Python Fact), and then ending with the marker for `[[ ## completed ## ]]`."""
+        self.one_output_template: str = """[[ ## fact_after_filter ## ]]\n{fact_after_filter}\n\n[[ ## completed ## ]]"""
+        self.message_template: list[dict[str, str]] = self.make_template(dspy_file_path)
+        self.llm_infer_fn: Callable = hipporag.llm_model.infer
+        self.model_name: str = hipporag.global_config.llm_name
+        self.default_gen_kwargs: dict[str, Any] = {}
 
-    def make_template(self, dspy_file_path):
+    def make_template(self, dspy_file_path: str) -> list[dict[str, str]]:
         if dspy_file_path is not None:
-            dspy_saved = json.load(open(dspy_file_path, 'r'))
+            dspy_saved: dict[str, Any] = json.load(open(dspy_file_path, 'r'))
         else:
-            dspy_saved = best_dspy_prompt
+            dspy_saved: dict[str, Any] = best_dspy_prompt
 
-        system_prompt = dspy_saved['prog']['system']
-        message_template = [
+        system_prompt: str = dspy_saved['prog']['system']
+        message_template: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
         ]
-        demos = dspy_saved["prog"]["demos"]
+        demos: list[str, str] = dspy_saved["prog"]["demos"]
         for demo in demos:
             message_template.append({"role": "user", "content": self.one_input_template.format(question=demo["question"], fact_before_filter=demo["fact_before_filter"])})
             message_template.append({"role": "assistant", "content": self.one_output_template.format(fact_after_filter=demo["fact_after_filter"])})

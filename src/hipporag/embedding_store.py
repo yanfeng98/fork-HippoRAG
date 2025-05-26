@@ -138,6 +138,14 @@ class EmbeddingStore:
     def get_all_ids(self) -> list[str]:
         return deepcopy(self.hash_ids)
 
+    def get_rows(self, hash_ids: list[str], dtype=np.float32) -> dict[str, dict[str, str]]:
+        if not hash_ids:
+            return {}
+
+        results: dict[str, dict[str, str]] = {id : self.hash_id_to_row[id] for id in hash_ids}
+
+        return results
+
     def delete(self, hash_ids):
         indices = []
 
@@ -160,13 +168,7 @@ class EmbeddingStore:
     def get_hash_id(self, text):
         return self.text_to_hash_id[text]
 
-    def get_rows(self, hash_ids, dtype=np.float32):
-        if not hash_ids:
-            return {}
 
-        results = {id : self.hash_id_to_row[id] for id in hash_ids}
-
-        return results
 
     def get_all_texts(self):
         return set(row['content'] for row in self.hash_id_to_row.values())

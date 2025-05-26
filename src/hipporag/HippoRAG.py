@@ -883,8 +883,8 @@ class HippoRAG:
         retrieval_results = []
 
         for q_idx, query in tqdm(enumerate(queries), desc="Retrieving", total=len(queries)):
-            rerank_start = time.time()
-            query_fact_scores = self.get_fact_scores(query)
+            rerank_start: float = time.time()
+            query_fact_scores: np.ndarray = self.get_fact_scores(query)
             top_k_fact_indices, top_k_facts, rerank_log = self.rerank_facts(query, query_fact_scores)
             rerank_end = time.time()
 
@@ -933,7 +933,7 @@ class HippoRAG:
         logger.info("Preparing for fast retrieval.")
 
         logger.info("Loading keys.")
-        self.query_to_embedding: Dict = {'triple': {}, 'passage': {}}
+        self.query_to_embedding: dict[str, dict[str, np.ndarray]] = {'triple': {}, 'passage': {}}
 
         self.entity_node_keys: list[str] = list(self.entity_embedding_store.get_all_ids()) # a list of phrase node keys
         self.passage_node_keys: list[str] = list(self.chunk_embedding_store.get_all_ids()) # a list of passage node keys
@@ -1026,6 +1026,133 @@ class HippoRAG:
             self.add_fact_edges(self.passage_node_keys, chunk_triples)
 
         self.ready_to_retrieve = True
+
+    def get_query_embeddings(self, queries: List[str] | List[QuerySolution]):
+        """
+        Retrieves embeddings for given queries and updates the internal query-to-embedding mapping. The method determines whether each query
+        is already present in the `self.query_to_embedding` dictionary under the keys 'triple' and 'passage'. If a query is not present in
+        either, it is encoded into embeddings using the embedding model and stored.
+
+        Args:
+            queries List[str] | List[QuerySolution]: A list of query strings or QuerySolution objects. Each query is checked for
+            its presence in the query-to-embedding mappings.
+        """
+
+        all_query_strings: list[str] = []
+        for query in queries:
+            if isinstance(query, QuerySolution) and (
+                    query.question not in self.query_to_embedding['triple'] or query.question not in
+                    self.query_to_embedding['passage']):
+                all_query_strings.append(query.question)
+            elif query not in self.query_to_embedding['triple'] or query not in self.query_to_embedding['passage']:
+                all_query_strings.append(query)
+
+        if len(all_query_strings) > 0:
+            # get all query embeddings
+            logger.info(f"Encoding {len(all_query_strings)} queries for query_to_fact.")
+            query_embeddings_for_triple: np.ndarray = self.embedding_model.batch_encode(all_query_strings,
+                                                                            instruction=get_query_instruction('query_to_fact'),
+                                                                            norm=True)
+            for query, embedding in zip(all_query_strings, query_embeddings_for_triple):
+                self.query_to_embedding['triple'][query] = embedding
+
+            logger.info(f"Encoding {len(all_query_strings)} queries for query_to_passage.")
+            query_embeddings_for_passage: np.ndarray = self.embedding_model.batch_encode(all_query_strings,
+                                                                             instruction=get_query_instruction('query_to_passage'),
+                                                                             norm=True)
+            for query, embedding in zip(all_query_strings, query_embeddings_for_passage):
+                self.query_to_embedding['passage'][query] = embedding
+
+    def get_fact_scores(self, query: str) -> np.ndarray:
+        """
+        Retrieves and computes normalized similarity scores between the given query and pre-stored fact embeddings.
+
+        Parameters:
+        query : str
+            The input query text for which similarity scores with fact embeddings
+            need to be computed.
+
+        Returns:
+        numpy.ndarray
+            A normalized array of similarity scores between the query and fact
+            embeddings. The shape of the array is determined by the number of
+            facts.
+
+        Raises:
+        KeyError
+            If no embedding is found for the provided query in the stored query
+            embeddings dictionary.
+        """
+        query_embedding: np.ndarray = self.query_to_embedding['triple'].get(query, None)
+        if query_embedding is None:
+            query_embedding: np.ndarray = self.embedding_model.batch_encode(query,
+                                                                instruction=get_query_instruction('query_to_fact'),
+                                                                norm=True)
+
+        # Check if there are any facts
+        if len(self.fact_embeddings) == 0:
+            logger.warning("No facts available for scoring. Returning empty array.")
+            return np.array([])
+
+        try:
+            query_fact_scores: np.ndarray = np.dot(self.fact_embeddings, query_embedding.T) # shape: (#facts, )
+            query_fact_scores = np.squeeze(query_fact_scores) if query_fact_scores.ndim == 2 else query_fact_scores
+            query_fact_scores = min_max_normalize(query_fact_scores)
+            return query_fact_scores
+        except Exception as e:
+            logger.error(f"Error computing fact scores: {str(e)}")
+            return np.array([])
+
+    def rerank_facts(self, query: str, query_fact_scores: np.ndarray) -> Tuple[List[int], List[Tuple], dict]:
+        """
+
+        Args:
+
+        Returns:
+            top_k_fact_indicies:
+            top_k_facts:
+            rerank_log (dict): {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
+                - candidate_facts (list): list of link_top_k facts (each fact is a relation triple in tuple data type).
+                - top_k_facts:
+
+
+        """
+        # load args
+        link_top_k: int = self.global_config.linking_top_k
+
+        # Check if there are any facts to rerank
+        if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
+            logger.warning("No facts available for reranking. Returning empty lists.")
+            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
+
+        try:
+            # Get the top k facts by score
+            if len(query_fact_scores) <= link_top_k:
+                # If we have fewer facts than requested, use all of them
+                candidate_fact_indices: list[str] = np.argsort(query_fact_scores)[::-1].tolist()
+            else:
+                # Otherwise get the top k
+                candidate_fact_indices: list[str] = np.argsort(query_fact_scores)[-link_top_k:][::-1].tolist()
+
+            # Get the actual fact IDs
+            real_candidate_fact_ids: list[str] = [self.fact_node_keys[idx] for idx in candidate_fact_indices]
+            fact_row_dict: dict[str, dict[str, str]] = self.fact_embedding_store.get_rows(real_candidate_fact_ids)
+            candidate_facts: list[tuple[str, str, str]] = [eval(fact_row_dict[id]['content']) for id in real_candidate_fact_ids]
+
+            # Rerank the facts
+            top_k_fact_indices, top_k_facts, reranker_dict = self.rerank_filter(query,
+                                                                                candidate_facts,
+                                                                                candidate_fact_indices,
+                                                                                len_after_rerank=link_top_k)
+
+            rerank_log: dict[str, list[tuple[str, str, str]]] = {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
+
+            return top_k_fact_indices, top_k_facts, rerank_log
+
+        except Exception as e:
+            logger.error(f"Error in rerank_facts: {str(e)}")
+            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': [], 'error': str(e)}
+
 
     def retrieve_dpr(self,
                      queries: List[str],
@@ -1232,81 +1359,8 @@ class HippoRAG:
         return queries_solutions, all_response_message, all_metadata
 
 
-    def get_query_embeddings(self, queries: List[str] | List[QuerySolution]):
-        """
-        Retrieves embeddings for given queries and updates the internal query-to-embedding mapping. The method determines whether each query
-        is already present in the `self.query_to_embedding` dictionary under the keys 'triple' and 'passage'. If a query is not present in
-        either, it is encoded into embeddings using the embedding model and stored.
 
-        Args:
-            queries List[str] | List[QuerySolution]: A list of query strings or QuerySolution objects. Each query is checked for
-            its presence in the query-to-embedding mappings.
-        """
 
-        all_query_strings = []
-        for query in queries:
-            if isinstance(query, QuerySolution) and (
-                    query.question not in self.query_to_embedding['triple'] or query.question not in
-                    self.query_to_embedding['passage']):
-                all_query_strings.append(query.question)
-            elif query not in self.query_to_embedding['triple'] or query not in self.query_to_embedding['passage']:
-                all_query_strings.append(query)
-
-        if len(all_query_strings) > 0:
-            # get all query embeddings
-            logger.info(f"Encoding {len(all_query_strings)} queries for query_to_fact.")
-            query_embeddings_for_triple = self.embedding_model.batch_encode(all_query_strings,
-                                                                            instruction=get_query_instruction('query_to_fact'),
-                                                                            norm=True)
-            for query, embedding in zip(all_query_strings, query_embeddings_for_triple):
-                self.query_to_embedding['triple'][query] = embedding
-
-            logger.info(f"Encoding {len(all_query_strings)} queries for query_to_passage.")
-            query_embeddings_for_passage = self.embedding_model.batch_encode(all_query_strings,
-                                                                             instruction=get_query_instruction('query_to_passage'),
-                                                                             norm=True)
-            for query, embedding in zip(all_query_strings, query_embeddings_for_passage):
-                self.query_to_embedding['passage'][query] = embedding
-
-    def get_fact_scores(self, query: str) -> np.ndarray:
-        """
-        Retrieves and computes normalized similarity scores between the given query and pre-stored fact embeddings.
-
-        Parameters:
-        query : str
-            The input query text for which similarity scores with fact embeddings
-            need to be computed.
-
-        Returns:
-        numpy.ndarray
-            A normalized array of similarity scores between the query and fact
-            embeddings. The shape of the array is determined by the number of
-            facts.
-
-        Raises:
-        KeyError
-            If no embedding is found for the provided query in the stored query
-            embeddings dictionary.
-        """
-        query_embedding = self.query_to_embedding['triple'].get(query, None)
-        if query_embedding is None:
-            query_embedding = self.embedding_model.batch_encode(query,
-                                                                instruction=get_query_instruction('query_to_fact'),
-                                                                norm=True)
-
-        # Check if there are any facts
-        if len(self.fact_embeddings) == 0:
-            logger.warning("No facts available for scoring. Returning empty array.")
-            return np.array([])
-
-        try:
-            query_fact_scores = np.dot(self.fact_embeddings, query_embedding.T) # shape: (#facts, )
-            query_fact_scores = np.squeeze(query_fact_scores) if query_fact_scores.ndim == 2 else query_fact_scores
-            query_fact_scores = min_max_normalize(query_fact_scores)
-            return query_fact_scores
-        except Exception as e:
-            logger.error(f"Error computing fact scores: {str(e)}")
-            return np.array([])
 
     def dense_passage_retrieval(self, query: str) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -1486,55 +1540,6 @@ class HippoRAG:
         return ppr_sorted_doc_ids, ppr_sorted_doc_scores
 
 
-    def rerank_facts(self, query: str, query_fact_scores: np.ndarray) -> Tuple[List[int], List[Tuple], dict]:
-        """
-
-        Args:
-
-        Returns:
-            top_k_fact_indicies:
-            top_k_facts:
-            rerank_log (dict): {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
-                - candidate_facts (list): list of link_top_k facts (each fact is a relation triple in tuple data type).
-                - top_k_facts:
-
-
-        """
-        # load args
-        link_top_k: int = self.global_config.linking_top_k
-
-        # Check if there are any facts to rerank
-        if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
-            logger.warning("No facts available for reranking. Returning empty lists.")
-            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
-
-        try:
-            # Get the top k facts by score
-            if len(query_fact_scores) <= link_top_k:
-                # If we have fewer facts than requested, use all of them
-                candidate_fact_indices = np.argsort(query_fact_scores)[::-1].tolist()
-            else:
-                # Otherwise get the top k
-                candidate_fact_indices = np.argsort(query_fact_scores)[-link_top_k:][::-1].tolist()
-
-            # Get the actual fact IDs
-            real_candidate_fact_ids = [self.fact_node_keys[idx] for idx in candidate_fact_indices]
-            fact_row_dict = self.fact_embedding_store.get_rows(real_candidate_fact_ids)
-            candidate_facts = [eval(fact_row_dict[id]['content']) for id in real_candidate_fact_ids]
-
-            # Rerank the facts
-            top_k_fact_indices, top_k_facts, reranker_dict = self.rerank_filter(query,
-                                                                                candidate_facts,
-                                                                                candidate_fact_indices,
-                                                                                len_after_rerank=link_top_k)
-
-            rerank_log = {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
-
-            return top_k_fact_indices, top_k_facts, rerank_log
-
-        except Exception as e:
-            logger.error(f"Error in rerank_facts: {str(e)}")
-            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': [], 'error': str(e)}
 
     def run_ppr(self,
                 reset_prob: np.ndarray,

@@ -114,10 +114,10 @@ def flatten_facts(chunk_triples: List[List[Triple]]) -> List[Triple]:
     graph_triples = list(set(graph_triples))
     return graph_triples
 
-def min_max_normalize(x):
-    min_val = np.min(x)
-    max_val = np.max(x)
-    range_val = max_val - min_val
+def min_max_normalize(x: np.ndarray) -> np.ndarray:
+    min_val: float = np.min(x)
+    max_val: float = np.max(x)
+    range_val: float = max_val - min_val
     
     # Handle the case where all values are the same (range is zero)
     if range_val == 0:

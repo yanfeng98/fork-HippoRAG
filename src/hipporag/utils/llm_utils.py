@@ -37,7 +37,7 @@ def fix_broken_generated_json(json_str: str) -> str:
     - Ensuring braces and brackets inside string literals are not considered.
 
     If the original json_str string can be successfully loaded by json.loads(), will directly return it without any modification.
-    
+
     Args:
         json_str (str): The malformed JSON string to be fixed.
 
@@ -148,13 +148,13 @@ def filter_invalid_triples(triples: List[List[str]]) -> List[List[str]]:
     - Each valid triple is converted to a list of strings.
     - The order of unique, valid triples is preserved.
     - Do not apply any text preprocessing techniques or rules within this function.
-    
+
     Args:
-        triples (List[List[str]]): 
+        triples (List[List[str]]):
             A list of triples (each a list of strings or elements that can be converted to strings).
 
     Returns:
-        List[List[str]]: 
+        List[List[str]]:
             A list of unique, valid triples, each represented as a list of strings.
     """
     unique_triples: set[tuple[str, str, str]] = set()
@@ -179,7 +179,7 @@ def safe_unicode_decode(content: Union[bytes, str]) -> str:
 
     Returns:
         str: The decoded Unicode string with escape sequences replaced by their corresponding characters.
-    
+
     Raises:
         AttributeError: If the input is neither bytes nor a string.
     """
@@ -208,7 +208,7 @@ def dynamic_retry(experiment_config: BaseConfig):
     Factory function to create a retry decorator with dynamic parameters.
 
     Args:
-        experiment_config (BaseConfig): Configuration containing stop and wait parameters. Expected to use the global config for running all experiments. 
+        experiment_config (BaseConfig): Configuration containing stop and wait parameters. Expected to use the global config for running all experiments.
 
     Returns:
         Callable: A retry decorator with dynamically set parameters.

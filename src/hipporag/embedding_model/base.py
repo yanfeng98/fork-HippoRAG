@@ -25,10 +25,10 @@ class EmbeddingConfig:
         ignored_prefixes = ("_ipython_", "_repr_")
         if any(key.startswith(prefix) for prefix in ignored_prefixes):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'")
-    
+
         if key in self._data:
             return self._data[key]
-        
+
         logger.error(f"'{self.__class__.__name__}' object has no attribute '{key}'")
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'")
 
@@ -68,8 +68,8 @@ class EmbeddingConfig:
     def __contains__(self, key: str) -> bool:
         """Allow usage of 'in' to check for keys."""
         return key in self._data
-    
-    
+
+
     def batch_upsert(self, updates: Dict[str, Any]) -> None:
         """Update existing attributes or add new ones from the given dictionary."""
         self._data.update(updates)
@@ -81,7 +81,7 @@ class EmbeddingConfig:
     def to_json(self) -> str:
         """Export the configuration as a JSON string."""
         return json.dumps(self._data)
-    
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "EmbeddingConfig":
         """Create an EmbeddingConfig instance from a dictionary."""
@@ -104,25 +104,25 @@ class BaseEmbeddingModel:
     global_config: BaseConfig
     embedding_model_name: str # Class name indicating which embedding model to use.
     embedding_config: EmbeddingConfig
-    
+
     embedding_dim: int # Need subclass to init
-    
+
     def __init__(self, global_config: Optional[BaseConfig] = None) -> None:
-        if global_config is None: 
+        if global_config is None:
             logger.debug("global config is not given. Using the default ExperimentConfig instance.")
             self.global_config = BaseConfig()
         else: self.global_config = global_config
         logger.debug(f"Loading {self.__class__.__name__} with global_config: {asdict(self.global_config)}")
-        
-        
+
+
         self.embedding_model_name = self.global_config.embedding_model_name
 
         logger.debug(f"Init {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
 
     def batch_encode(self, texts: List[str], **kwargs) -> None:
         raise NotImplementedError
-    
-    
+
+
     def get_query_doc_scores(self, query_vec: np.ndarray, doc_vecs: np.ndarray):
         # """
         # @param query_vec: query vector
@@ -211,7 +211,7 @@ def make_cache_embed(encode_func, cache_file_name, device):
 
 class EmbeddingCache:
     """A multiprocessing-safe global cache for storing embeddings."""
-    
+
     _manager = multiprocessing.Manager()
     _cache = _manager.dict()  # Shared dictionary for multiprocessing
     _lock = threading.Lock()  # Thread-safe lock for concurrent access

@@ -42,7 +42,8 @@ uv python install 3.12
 uv venv --python 3.12
 source .venv/bin/activate
 uv pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
-uv pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+python demo_openai.py
 ```
 
 ```sh

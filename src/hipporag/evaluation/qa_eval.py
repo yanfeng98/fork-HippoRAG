@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple, Optional, Union, Callable
+from typing import List, Dict, Tuple, Optional, Callable
 from collections import Counter
 import numpy as np
 
@@ -26,7 +26,7 @@ class QAExactMatch(BaseMetric):
             aggregation_fn (Callable): Function to aggregate scores across multiple gold answers (default: np.max).
 
         Returns:
-            Tuple[Dict[str, float], List[Dict[str, float]]]: 
+            Tuple[Dict[str, float], List[Dict[str, float]]]:
                 - A dictionary with the averaged EM score.
                 - A list of dictionaries with EM scores for each example.
         """
@@ -62,7 +62,7 @@ class QAF1Score(BaseMetric):
             aggregation_fn (Callable): Function to aggregate scores across multiple gold answers (default: np.max).
 
         Returns:
-            Tuple[Dict[str, float], List[Dict[str, float]]]: 
+            Tuple[Dict[str, float], List[Dict[str, float]]]:
                 - A dictionary with the averaged F1 score.
                 - A list of dictionaries with F1 scores for each example.
         """

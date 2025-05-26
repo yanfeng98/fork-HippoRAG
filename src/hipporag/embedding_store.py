@@ -126,6 +126,18 @@ class EmbeddingStore:
     def get_all_id_to_rows(self) -> dict[str, dict[str, str]]:
         return deepcopy(self.hash_id_to_row)
 
+    def get_embeddings(self, hash_ids: list[str], dtype=np.float32) -> np.ndarray:
+        if not hash_ids:
+            return []
+
+        indices: np.ndarray = np.array([self.hash_id_to_idx[h] for h in hash_ids], dtype=np.intp)
+        embeddings: np.ndarray = np.array(self.embeddings, dtype=dtype)[indices]
+
+        return embeddings
+
+    def get_all_ids(self) -> list[str]:
+        return deepcopy(self.hash_ids)
+
     def delete(self, hash_ids):
         indices = []
 
@@ -156,20 +168,9 @@ class EmbeddingStore:
 
         return results
 
-    def get_all_ids(self):
-        return deepcopy(self.hash_ids)
-
     def get_all_texts(self):
         return set(row['content'] for row in self.hash_id_to_row.values())
 
     def get_embedding(self, hash_id, dtype=np.float32) -> np.ndarray:
         return self.embeddings[self.hash_id_to_idx[hash_id]].astype(dtype)
-    
-    def get_embeddings(self, hash_ids, dtype=np.float32) -> list[np.ndarray]:
-        if not hash_ids:
-            return []
 
-        indices = np.array([self.hash_id_to_idx[h] for h in hash_ids], dtype=np.intp)
-        embeddings = np.array(self.embeddings, dtype=dtype)[indices]
-
-        return embeddings

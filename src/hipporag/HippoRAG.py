@@ -287,19 +287,19 @@ class HippoRAG:
         chunk_keys_to_save: set = set()
 
         if not self.global_config.force_openie_from_scratch and os.path.isfile(self.openie_results_path):
-            openie_results = json.load(open(self.openie_results_path))
-            all_openie_info = openie_results.get('docs', [])
+            openie_results: dict[str, Any] = json.load(open(self.openie_results_path))
+            all_openie_info: list[dict[str, Any]] = openie_results.get('docs', [])
 
             #Standardizing indices for OpenIE Files.
 
-            renamed_openie_info = []
+            renamed_openie_info: list[dict[str, Any]] = []
             for openie_info in all_openie_info:
                 openie_info['idx'] = compute_mdhash_id(openie_info['passage'], 'chunk-')
                 renamed_openie_info.append(openie_info)
 
             all_openie_info = renamed_openie_info
 
-            existing_openie_keys = set([info['idx'] for info in all_openie_info])
+            existing_openie_keys: set[str] = set([info['idx'] for info in all_openie_info])
 
             for chunk_key in chunk_keys:
                 if chunk_key not in existing_openie_keys:
@@ -476,6 +476,208 @@ class HippoRAG:
 
         return num_new_chunks
 
+    def add_synonymy_edges(self):
+        """
+        Adds synonymy edges between similar nodes in the graph to enhance connectivity by identifying and linking synonym entities.
+
+        This method performs key operations to compute and add synonymy edges. It first retrieves embeddings for all nodes, then conducts
+        a nearest neighbor (KNN) search to find similar nodes. These similar nodes are identified based on a score threshold, and edges
+        are added to represent the synonym relationship.
+
+        Attributes:
+            entity_id_to_row: dict (populated within the function). Maps each entity ID to its corresponding row data, where rows
+                              contain `content` of entities used for comparison.
+            entity_embedding_store: Manages retrieval of texts and embeddings for all rows related to entities.
+            global_config: Configuration object that defines parameters such as `synonymy_edge_topk`, `synonymy_edge_sim_threshold`,
+                           `synonymy_edge_query_batch_size`, and `synonymy_edge_key_batch_size`.
+            node_to_node_stats: dict. Stores scores for edges between nodes representing their relationship.
+
+        """
+        logger.info(f"Expanding graph with synonymy edges")
+
+        self.entity_id_to_row: dict[str, dict[str, str]] = self.entity_embedding_store.get_all_id_to_rows()
+        entity_node_keys: list[str] = list(self.entity_id_to_row.keys())
+        entity_embs: np.ndarray = self.entity_embedding_store.get_embeddings(entity_node_keys)
+
+        logger.info(f"Performing KNN retrieval for each phrase nodes ({len(entity_node_keys)}).")
+
+        # Here we build synonymy edges only between newly inserted phrase nodes and all phrase nodes in the storage to reduce cost for incremental graph updates
+        query_node_key2knn_node_keys: dict[str, tuple[list[str], list[float]]] = retrieve_knn(query_ids=entity_node_keys,
+                                                    key_ids=entity_node_keys,
+                                                    query_vecs=entity_embs,
+                                                    key_vecs=entity_embs,
+                                                    k=self.global_config.synonymy_edge_topk,
+                                                    query_batch_size=self.global_config.synonymy_edge_query_batch_size,
+                                                    key_batch_size=self.global_config.synonymy_edge_key_batch_size)
+
+        num_synonym_triple: int = 0
+        synonym_candidates: list[tuple[str, list[str, float]]] = []  # [(node key, [(synonym node key, corresponding score), ...]), ...]
+
+        for node_key in tqdm(query_node_key2knn_node_keys.keys(), total=len(query_node_key2knn_node_keys)):
+            synonyms: list[tuple[str, float]] = []
+
+            entity: str = self.entity_id_to_row[node_key]["content"]
+
+            if len(re.sub('[^A-Za-z0-9]', '', entity)) > 2:
+                nns: tuple[list[str], list[float]] = query_node_key2knn_node_keys[node_key]
+
+                num_nns: int = 0
+                for nn, score in zip(nns[0], nns[1]):
+                    if score < self.global_config.synonymy_edge_sim_threshold or num_nns > 100:
+                        break
+
+                    nn_phrase: str = self.entity_id_to_row[nn]["content"]
+
+                    if nn != node_key and nn_phrase != '':
+                        synonyms.append((nn, score))
+                        num_synonym_triple += 1
+
+                        self.node_to_node_stats[(node_key, nn)] = score  # Need to seriously discuss on this
+                        num_nns += 1
+
+            synonym_candidates.append((node_key, synonyms))
+
+    def augment_graph(self):
+        """
+        Provides utility functions to augment a graph by adding new nodes and edges.
+        It ensures that the graph structure is extended to include additional components,
+        and logs the completion status along with printing the updated graph information.
+        """
+
+        self.add_new_nodes()
+        self.add_new_edges()
+
+        logger.info(f"Graph construction completed!")
+        print(self.get_graph_info())
+
+    def add_new_nodes(self):
+        """
+        Adds new nodes to the graph from entity and passage embedding stores based on their attributes.
+
+        This method identifies and adds new nodes to the graph by comparing existing nodes
+        in the graph and nodes retrieved from the entity embedding store and the passage
+        embedding store. The method checks attributes and ensures no duplicates are added.
+        New nodes are prepared and added in bulk to optimize graph updates.
+        """
+
+        existing_nodes: dict = {v["name"]: v for v in self.graph.vs if "name" in v.attributes()}
+
+        entity_to_row: dict[str, dict[str, str]] = self.entity_embedding_store.get_all_id_to_rows()
+        passage_to_row: dict[str, dict[str, str]] = self.chunk_embedding_store.get_all_id_to_rows()
+
+        node_to_rows: dict[str, dict[str, str]] = entity_to_row
+        node_to_rows.update(passage_to_row)
+
+        new_nodes: dict[str, list[str]] = {}
+        for node_id, node in node_to_rows.items():
+            node['name'] = node_id
+            if node_id not in existing_nodes:
+                for k, v in node.items():
+                    if k not in new_nodes:
+                        new_nodes[k] = []
+                    new_nodes[k].append(v)
+
+        if len(new_nodes) > 0:
+            self.graph.add_vertices(n=len(next(iter(new_nodes.values()))), attributes=new_nodes)
+
+    def add_new_edges(self):
+        """
+        Processes edges from `node_to_node_stats` to add them into a graph object while
+        managing adjacency lists, validating edges, and logging invalid edge cases.
+        """
+
+        graph_adj_list: dict[str, dict[str, float]] = defaultdict(dict)
+        graph_inverse_adj_list: dict[str, dict[str, float]] = defaultdict(dict)
+        edge_source_node_keys: list[str] = []
+        edge_target_node_keys: list[str] = []
+        edge_metadata: list[dict[str, float]] = []
+        for edge, weight in self.node_to_node_stats.items():
+            if edge[0] == edge[1]: continue
+            graph_adj_list[edge[0]][edge[1]] = weight
+            graph_inverse_adj_list[edge[1]][edge[0]] = weight
+
+            edge_source_node_keys.append(edge[0])
+            edge_target_node_keys.append(edge[1])
+            edge_metadata.append({
+                "weight": weight
+            })
+
+        valid_edges, valid_weights = [], {"weight": []}
+        current_node_ids: list[str] = set(self.graph.vs["name"])
+        for source_node_id, target_node_id, edge_d in zip(edge_source_node_keys, edge_target_node_keys, edge_metadata):
+            if source_node_id in current_node_ids and target_node_id in current_node_ids:
+                valid_edges.append((source_node_id, target_node_id))
+                weight: float = edge_d.get("weight", 1.0)
+                valid_weights["weight"].append(weight)
+            else:
+                logger.warning(f"Edge {source_node_id} -> {target_node_id} is not valid.")
+        self.graph.add_edges(
+            valid_edges,
+            attributes=valid_weights
+        )
+
+    def get_graph_info(self) -> dict[str, int]:
+        """
+        Obtains detailed information about the graph such as the number of nodes,
+        triples, and their classifications.
+
+        This method calculates various statistics about the graph based on the
+        stores and node-to-node relationships, including counts of phrase and
+        passage nodes, total nodes, extracted triples, triples involving passage
+        nodes, synonymy triples, and total triples.
+
+        Returns:
+            Dict
+                A dictionary containing the following keys and their respective values:
+                - num_phrase_nodes: The number of unique phrase nodes.
+                - num_passage_nodes: The number of unique passage nodes.
+                - num_total_nodes: The total number of nodes (sum of phrase and passage nodes).
+                - num_extracted_triples: The number of unique extracted triples.
+                - num_triples_with_passage_node: The number of triples involving at least one
+                  passage node.
+                - num_synonymy_triples: The number of synonymy triples (distinct from extracted
+                  triples and those with passage nodes).
+                - num_total_triples: The total number of triples.
+        """
+        graph_info: dict[str, int] = {}
+
+        # get # of phrase nodes
+        phrase_nodes_keys: list[str] = self.entity_embedding_store.get_all_ids()
+        graph_info["num_phrase_nodes"] = len(set(phrase_nodes_keys))
+
+        # get # of passage nodes
+        passage_nodes_keys: list[str] = self.chunk_embedding_store.get_all_ids()
+        graph_info["num_passage_nodes"] = len(set(passage_nodes_keys))
+
+        # get # of total nodes
+        graph_info["num_total_nodes"] = graph_info["num_phrase_nodes"] + graph_info["num_passage_nodes"]
+
+        # get # of extracted triples
+        graph_info["num_extracted_triples"] = len(self.fact_embedding_store.get_all_ids())
+
+        num_triples_with_passage_node: int = 0
+        passage_nodes_set: set[str] = set(passage_nodes_keys)
+        num_triples_with_passage_node: int = sum(
+            1 for node_pair in self.node_to_node_stats
+            if node_pair[0] in passage_nodes_set or node_pair[1] in passage_nodes_set
+        )
+        graph_info['num_triples_with_passage_node'] = num_triples_with_passage_node
+
+        graph_info['num_synonymy_triples'] = len(self.node_to_node_stats) - graph_info[
+            "num_extracted_triples"] - num_triples_with_passage_node
+
+        # get # of total triples
+        graph_info["num_total_triples"] = len(self.node_to_node_stats)
+
+        return graph_info
+
+    def save_igraph(self):
+        logger.info(
+            f"Writing graph with {len(self.graph.vs())} nodes, {len(self.graph.es())} edges"
+        )
+        self.graph.write_pickle(self._graph_pickle_filename)
+        logger.info(f"Saving graph completed!")
+
     def delete(self, docs_to_delete: List[str]):
         """
         Deletes the given documents from all data structures within the HippoRAG class.
@@ -559,6 +761,81 @@ class HippoRAG:
 
         self.ready_to_retrieve = False
 
+
+    def rag_qa(self,
+               queries: List[str|QuerySolution],
+               gold_docs: List[List[str]] = None,
+               gold_answers: List[List[str]] = None) -> Tuple[List[QuerySolution], List[str], List[Dict]] | Tuple[List[QuerySolution], List[str], List[Dict], Dict, Dict]:
+        """
+        Performs retrieval-augmented generation enhanced QA using the HippoRAG 2 framework.
+
+        This method can handle both string-based queries and pre-processed QuerySolution objects. Depending
+        on its inputs, it returns answers only or additionally evaluate retrieval and answer quality using
+        recall @ k, exact match and F1 score metrics.
+
+        Parameters:
+            queries (List[Union[str, QuerySolution]]): A list of queries, which can be either strings or
+                QuerySolution instances. If they are strings, retrieval will be performed.
+            gold_docs (Optional[List[List[str]]]): A list of lists containing gold-standard documents for
+                each query. This is used if document-level evaluation is to be performed. Default is None.
+            gold_answers (Optional[List[List[str]]]): A list of lists containing gold-standard answers for
+                each query. Required if evaluation of question answering (QA) answers is enabled. Default
+                is None.
+
+        Returns:
+            Union[
+                Tuple[List[QuerySolution], List[str], List[Dict]],
+                Tuple[List[QuerySolution], List[str], List[Dict], Dict, Dict]
+            ]: A tuple that always includes:
+                - List of QuerySolution objects containing answers and metadata for each query.
+                - List of response messages for the provided queries.
+                - List of metadata dictionaries for each query.
+                If evaluation is enabled, the tuple also includes:
+                - A dictionary with overall results from the retrieval phase (if applicable).
+                - A dictionary with overall QA evaluation metrics (exact match and F1 scores).
+
+        """
+        if gold_answers is not None:
+            qa_em_evaluator: QAExactMatch = QAExactMatch(global_config=self.global_config)
+            qa_f1_evaluator: QAF1Score = QAF1Score(global_config=self.global_config)
+
+        # Retrieving (if necessary)
+        overall_retrieval_result = None
+
+        if not isinstance(queries[0], QuerySolution):
+            if gold_docs is not None:
+                queries, overall_retrieval_result = self.retrieve(queries=queries, gold_docs=gold_docs)
+            else:
+                queries = self.retrieve(queries=queries)
+
+        # Performing QA
+        queries_solutions, all_response_message, all_metadata = self.qa(queries)
+
+        # Evaluating QA
+        if gold_answers is not None:
+            overall_qa_em_result, example_qa_em_results = qa_em_evaluator.calculate_metric_scores(
+                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
+                aggregation_fn=np.max)
+            overall_qa_f1_result, example_qa_f1_results = qa_f1_evaluator.calculate_metric_scores(
+                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
+                aggregation_fn=np.max)
+
+            # round off to 4 decimal places for QA results
+            overall_qa_em_result.update(overall_qa_f1_result)
+            overall_qa_results = overall_qa_em_result
+            overall_qa_results = {k: round(float(v), 4) for k, v in overall_qa_results.items()}
+            logger.info(f"Evaluation results for QA: {overall_qa_results}")
+
+            # Save retrieval and QA results
+            for idx, q in enumerate(queries_solutions):
+                q.gold_answers = list(gold_answers[idx])
+                if gold_docs is not None:
+                    q.gold_docs = gold_docs[idx]
+
+            return queries_solutions, all_response_message, all_metadata, overall_retrieval_result, overall_qa_results
+        else:
+            return queries_solutions, all_response_message, all_metadata
+
     def retrieve(self,
                  queries: List[str],
                  num_to_retrieve: int = None,
@@ -590,13 +867,13 @@ class HippoRAG:
         -----
         - Long queries with no relevant facts after reranking will default to results from dense passage retrieval.
         """
-        retrieve_start_time = time.time()  # Record start time
+        retrieve_start_time: float = time.time()  # Record start time
 
         if num_to_retrieve is None:
-            num_to_retrieve = self.global_config.retrieval_top_k
+            num_to_retrieve: int = self.global_config.retrieval_top_k
 
         if gold_docs is not None:
-            retrieval_recall_evaluator = RetrievalRecall(global_config=self.global_config)
+            retrieval_recall_evaluator: RetrievalRecall = RetrievalRecall(global_config=self.global_config)
 
         if not self.ready_to_retrieve:
             self.prepare_retrieval_objects()
@@ -647,79 +924,108 @@ class HippoRAG:
         else:
             return retrieval_results
 
-    def rag_qa(self,
-               queries: List[str|QuerySolution],
-               gold_docs: List[List[str]] = None,
-               gold_answers: List[List[str]] = None) -> Tuple[List[QuerySolution], List[str], List[Dict]] | Tuple[List[QuerySolution], List[str], List[Dict], Dict, Dict]:
+    def prepare_retrieval_objects(self):
         """
-        Performs retrieval-augmented generation enhanced QA using the HippoRAG 2 framework.
-
-        This method can handle both string-based queries and pre-processed QuerySolution objects. Depending
-        on its inputs, it returns answers only or additionally evaluate retrieval and answer quality using
-        recall @ k, exact match and F1 score metrics.
-
-        Parameters:
-            queries (List[Union[str, QuerySolution]]): A list of queries, which can be either strings or
-                QuerySolution instances. If they are strings, retrieval will be performed.
-            gold_docs (Optional[List[List[str]]]): A list of lists containing gold-standard documents for
-                each query. This is used if document-level evaluation is to be performed. Default is None.
-            gold_answers (Optional[List[List[str]]]): A list of lists containing gold-standard answers for
-                each query. Required if evaluation of question answering (QA) answers is enabled. Default
-                is None.
-
-        Returns:
-            Union[
-                Tuple[List[QuerySolution], List[str], List[Dict]],
-                Tuple[List[QuerySolution], List[str], List[Dict], Dict, Dict]
-            ]: A tuple that always includes:
-                - List of QuerySolution objects containing answers and metadata for each query.
-                - List of response messages for the provided queries.
-                - List of metadata dictionaries for each query.
-                If evaluation is enabled, the tuple also includes:
-                - A dictionary with overall results from the retrieval phase (if applicable).
-                - A dictionary with overall QA evaluation metrics (exact match and F1 scores).
-
+        Prepares various in-memory objects and attributes necessary for fast retrieval processes, such as embedding data and graph relationships, ensuring consistency
+        and alignment with the underlying graph structure.
         """
-        if gold_answers is not None:
-            qa_em_evaluator = QAExactMatch(global_config=self.global_config)
-            qa_f1_evaluator = QAF1Score(global_config=self.global_config)
 
-        # Retrieving (if necessary)
-        overall_retrieval_result = None
+        logger.info("Preparing for fast retrieval.")
 
-        if not isinstance(queries[0], QuerySolution):
-            if gold_docs is not None:
-                queries, overall_retrieval_result = self.retrieve(queries=queries, gold_docs=gold_docs)
-            else:
-                queries = self.retrieve(queries=queries)
+        logger.info("Loading keys.")
+        self.query_to_embedding: Dict = {'triple': {}, 'passage': {}}
 
-        # Performing QA
-        queries_solutions, all_response_message, all_metadata = self.qa(queries)
+        self.entity_node_keys: list[str] = list(self.entity_embedding_store.get_all_ids()) # a list of phrase node keys
+        self.passage_node_keys: list[str] = list(self.chunk_embedding_store.get_all_ids()) # a list of passage node keys
+        self.fact_node_keys: list[str] = list(self.fact_embedding_store.get_all_ids())
 
-        # Evaluating QA
-        if gold_answers is not None:
-            overall_qa_em_result, example_qa_em_results = qa_em_evaluator.calculate_metric_scores(
-                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
-                aggregation_fn=np.max)
-            overall_qa_f1_result, example_qa_f1_results = qa_f1_evaluator.calculate_metric_scores(
-                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
-                aggregation_fn=np.max)
+        # Check if the graph has the expected number of nodes
+        expected_node_count: int = len(self.entity_node_keys) + len(self.passage_node_keys)
+        actual_node_count: int = self.graph.vcount()
 
-            # round off to 4 decimal places for QA results
-            overall_qa_em_result.update(overall_qa_f1_result)
-            overall_qa_results = overall_qa_em_result
-            overall_qa_results = {k: round(float(v), 4) for k, v in overall_qa_results.items()}
-            logger.info(f"Evaluation results for QA: {overall_qa_results}")
+        if expected_node_count != actual_node_count:
+            logger.warning(f"Graph node count mismatch: expected {expected_node_count}, got {actual_node_count}")
+            # If the graph is empty but we have nodes, we need to add them
+            if actual_node_count == 0 and expected_node_count > 0:
+                logger.info(f"Initializing graph with {expected_node_count} nodes")
+                self.add_new_nodes()
+                self.save_igraph()
 
-            # Save retrieval and QA results
-            for idx, q in enumerate(queries_solutions):
-                q.gold_answers = list(gold_answers[idx])
-                if gold_docs is not None:
-                    q.gold_docs = gold_docs[idx]
+        # Create mapping from node name to vertex index
+        try:
+            igraph_name_to_idx: dict[str, int] = {node["name"]: idx for idx, node in enumerate(self.graph.vs)} # from node key to the index in the backbone graph
+            self.node_name_to_vertex_idx: dict[str, int] = igraph_name_to_idx
 
-            return queries_solutions, all_response_message, all_metadata, overall_retrieval_result, overall_qa_results
-        else:
-            return queries_solutions, all_response_message, all_metadata
+            # Check if all entity and passage nodes are in the graph
+            missing_entity_nodes: list[str] = [node_key for node_key in self.entity_node_keys if node_key not in igraph_name_to_idx]
+            missing_passage_nodes: list[str] = [node_key for node_key in self.passage_node_keys if node_key not in igraph_name_to_idx]
+
+            if missing_entity_nodes or missing_passage_nodes:
+                logger.warning(f"Missing nodes in graph: {len(missing_entity_nodes)} entity nodes, {len(missing_passage_nodes)} passage nodes")
+                # If nodes are missing, rebuild the graph
+                self.add_new_nodes()
+                self.save_igraph()
+                # Update the mapping
+                igraph_name_to_idx = {node["name"]: idx for idx, node in enumerate(self.graph.vs)}
+                self.node_name_to_vertex_idx = igraph_name_to_idx
+
+            self.entity_node_idxs: list[int] = [igraph_name_to_idx[node_key] for node_key in self.entity_node_keys] # a list of backbone graph node index
+            self.passage_node_idxs: list[int] = [igraph_name_to_idx[node_key] for node_key in self.passage_node_keys] # a list of backbone passage node index
+        except Exception as e:
+            logger.error(f"Error creating node index mapping: {str(e)}")
+            # Initialize with empty lists if mapping fails
+            self.node_name_to_vertex_idx = {}
+            self.entity_node_idxs = []
+            self.passage_node_idxs = []
+
+        logger.info("Loading embeddings.")
+        self.entity_embeddings: np.ndarray = np.array(self.entity_embedding_store.get_embeddings(self.entity_node_keys))
+        self.passage_embeddings: np.ndarray = np.array(self.chunk_embedding_store.get_embeddings(self.passage_node_keys))
+        self.fact_embeddings: np.ndarray = np.array(self.fact_embedding_store.get_embeddings(self.fact_node_keys))
+
+        all_openie_info, _ = self.load_existing_openie([])
+
+        self.proc_triples_to_docs: dict[str, set[int]] = {}
+
+        for doc in all_openie_info:
+            triples: List[Triple] = flatten_facts([doc['extracted_triples']])
+            for triple in triples:
+                if len(triple) == 3:
+                    proc_triple: Triple = tuple(text_processing(list(triple)))
+                    self.proc_triples_to_docs[str(proc_triple)] = self.proc_triples_to_docs.get(str(proc_triple), set()).union(set([doc['idx']]))
+
+        if self.ent_node_to_chunk_ids is None:
+            ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
+
+            # Check if the lengths match
+            if not (len(self.passage_node_keys) == len(ner_results_dict) == len(triple_results_dict)):
+                logger.warning(f"Length mismatch: passage_node_keys={len(self.passage_node_keys)}, ner_results_dict={len(ner_results_dict)}, triple_results_dict={len(triple_results_dict)}")
+
+                # If there are missing keys, create empty entries for them
+                for chunk_id in self.passage_node_keys:
+                    if chunk_id not in ner_results_dict:
+                        ner_results_dict[chunk_id] = NerRawOutput(
+                            chunk_id=chunk_id,
+                            response=None,
+                            metadata={},
+                            unique_entities=[]
+                        )
+                    if chunk_id not in triple_results_dict:
+                        triple_results_dict[chunk_id] = TripleRawOutput(
+                            chunk_id=chunk_id,
+                            response=None,
+                            metadata={},
+                            triples=[]
+                        )
+
+            # prepare data_store
+            chunk_triples: list[list[tuple[str, str, str]]] = [[text_processing(t) for t in triple_results_dict[chunk_id].triples] for chunk_id in self.passage_node_keys]
+
+            self.node_to_node_stats: dict[tuple[str, str], float] = {}
+            self.ent_node_to_chunk_ids: dict[str, set[str]] = {}
+            self.add_fact_edges(self.passage_node_keys, chunk_triples)
+
+        self.ready_to_retrieve = True
 
     def retrieve_dpr(self,
                      queries: List[str],
@@ -925,316 +1231,6 @@ class HippoRAG:
 
         return queries_solutions, all_response_message, all_metadata
 
-
-
-
-    def add_synonymy_edges(self):
-        """
-        Adds synonymy edges between similar nodes in the graph to enhance connectivity by identifying and linking synonym entities.
-
-        This method performs key operations to compute and add synonymy edges. It first retrieves embeddings for all nodes, then conducts
-        a nearest neighbor (KNN) search to find similar nodes. These similar nodes are identified based on a score threshold, and edges
-        are added to represent the synonym relationship.
-
-        Attributes:
-            entity_id_to_row: dict (populated within the function). Maps each entity ID to its corresponding row data, where rows
-                              contain `content` of entities used for comparison.
-            entity_embedding_store: Manages retrieval of texts and embeddings for all rows related to entities.
-            global_config: Configuration object that defines parameters such as `synonymy_edge_topk`, `synonymy_edge_sim_threshold`,
-                           `synonymy_edge_query_batch_size`, and `synonymy_edge_key_batch_size`.
-            node_to_node_stats: dict. Stores scores for edges between nodes representing their relationship.
-
-        """
-        logger.info(f"Expanding graph with synonymy edges")
-
-        self.entity_id_to_row = self.entity_embedding_store.get_all_id_to_rows()
-        entity_node_keys = list(self.entity_id_to_row.keys())
-
-        logger.info(f"Performing KNN retrieval for each phrase nodes ({len(entity_node_keys)}).")
-
-        entity_embs = self.entity_embedding_store.get_embeddings(entity_node_keys)
-
-        # Here we build synonymy edges only between newly inserted phrase nodes and all phrase nodes in the storage to reduce cost for incremental graph updates
-        query_node_key2knn_node_keys = retrieve_knn(query_ids=entity_node_keys,
-                                                    key_ids=entity_node_keys,
-                                                    query_vecs=entity_embs,
-                                                    key_vecs=entity_embs,
-                                                    k=self.global_config.synonymy_edge_topk,
-                                                    query_batch_size=self.global_config.synonymy_edge_query_batch_size,
-                                                    key_batch_size=self.global_config.synonymy_edge_key_batch_size)
-
-        num_synonym_triple = 0
-        synonym_candidates = []  # [(node key, [(synonym node key, corresponding score), ...]), ...]
-
-        for node_key in tqdm(query_node_key2knn_node_keys.keys(), total=len(query_node_key2knn_node_keys)):
-            synonyms = []
-
-            entity = self.entity_id_to_row[node_key]["content"]
-
-            if len(re.sub('[^A-Za-z0-9]', '', entity)) > 2:
-                nns = query_node_key2knn_node_keys[node_key]
-
-                num_nns = 0
-                for nn, score in zip(nns[0], nns[1]):
-                    if score < self.global_config.synonymy_edge_sim_threshold or num_nns > 100:
-                        break
-
-                    nn_phrase = self.entity_id_to_row[nn]["content"]
-
-                    if nn != node_key and nn_phrase != '':
-                        sim_edge = (node_key, nn)
-                        synonyms.append((nn, score))
-                        num_synonym_triple += 1
-
-                        self.node_to_node_stats[sim_edge] = score  # Need to seriously discuss on this
-                        num_nns += 1
-
-            synonym_candidates.append((node_key, synonyms))
-
-    def augment_graph(self):
-        """
-        Provides utility functions to augment a graph by adding new nodes and edges.
-        It ensures that the graph structure is extended to include additional components,
-        and logs the completion status along with printing the updated graph information.
-        """
-
-        self.add_new_nodes()
-        self.add_new_edges()
-
-        logger.info(f"Graph construction completed!")
-        print(self.get_graph_info())
-
-    def add_new_nodes(self):
-        """
-        Adds new nodes to the graph from entity and passage embedding stores based on their attributes.
-
-        This method identifies and adds new nodes to the graph by comparing existing nodes
-        in the graph and nodes retrieved from the entity embedding store and the passage
-        embedding store. The method checks attributes and ensures no duplicates are added.
-        New nodes are prepared and added in bulk to optimize graph updates.
-        """
-
-        existing_nodes = {v["name"]: v for v in self.graph.vs if "name" in v.attributes()}
-
-        entity_to_row = self.entity_embedding_store.get_all_id_to_rows()
-        passage_to_row = self.chunk_embedding_store.get_all_id_to_rows()
-
-        node_to_rows = entity_to_row
-        node_to_rows.update(passage_to_row)
-
-        new_nodes = {}
-        for node_id, node in node_to_rows.items():
-            node['name'] = node_id
-            if node_id not in existing_nodes:
-                for k, v in node.items():
-                    if k not in new_nodes:
-                        new_nodes[k] = []
-                    new_nodes[k].append(v)
-
-        if len(new_nodes) > 0:
-            self.graph.add_vertices(n=len(next(iter(new_nodes.values()))), attributes=new_nodes)
-
-    def add_new_edges(self):
-        """
-        Processes edges from `node_to_node_stats` to add them into a graph object while
-        managing adjacency lists, validating edges, and logging invalid edge cases.
-        """
-
-        graph_adj_list = defaultdict(dict)
-        graph_inverse_adj_list = defaultdict(dict)
-        edge_source_node_keys = []
-        edge_target_node_keys = []
-        edge_metadata = []
-        for edge, weight in self.node_to_node_stats.items():
-            if edge[0] == edge[1]: continue
-            graph_adj_list[edge[0]][edge[1]] = weight
-            graph_inverse_adj_list[edge[1]][edge[0]] = weight
-
-            edge_source_node_keys.append(edge[0])
-            edge_target_node_keys.append(edge[1])
-            edge_metadata.append({
-                "weight": weight
-            })
-
-        valid_edges, valid_weights = [], {"weight": []}
-        current_node_ids = set(self.graph.vs["name"])
-        for source_node_id, target_node_id, edge_d in zip(edge_source_node_keys, edge_target_node_keys, edge_metadata):
-            if source_node_id in current_node_ids and target_node_id in current_node_ids:
-                valid_edges.append((source_node_id, target_node_id))
-                weight = edge_d.get("weight", 1.0)
-                valid_weights["weight"].append(weight)
-            else:
-                logger.warning(f"Edge {source_node_id} -> {target_node_id} is not valid.")
-        self.graph.add_edges(
-            valid_edges,
-            attributes=valid_weights
-        )
-
-    def save_igraph(self):
-        logger.info(
-            f"Writing graph with {len(self.graph.vs())} nodes, {len(self.graph.es())} edges"
-        )
-        self.graph.write_pickle(self._graph_pickle_filename)
-        logger.info(f"Saving graph completed!")
-
-    def get_graph_info(self) -> Dict:
-        """
-        Obtains detailed information about the graph such as the number of nodes,
-        triples, and their classifications.
-
-        This method calculates various statistics about the graph based on the
-        stores and node-to-node relationships, including counts of phrase and
-        passage nodes, total nodes, extracted triples, triples involving passage
-        nodes, synonymy triples, and total triples.
-
-        Returns:
-            Dict
-                A dictionary containing the following keys and their respective values:
-                - num_phrase_nodes: The number of unique phrase nodes.
-                - num_passage_nodes: The number of unique passage nodes.
-                - num_total_nodes: The total number of nodes (sum of phrase and passage nodes).
-                - num_extracted_triples: The number of unique extracted triples.
-                - num_triples_with_passage_node: The number of triples involving at least one
-                  passage node.
-                - num_synonymy_triples: The number of synonymy triples (distinct from extracted
-                  triples and those with passage nodes).
-                - num_total_triples: The total number of triples.
-        """
-        graph_info = {}
-
-        # get # of phrase nodes
-        phrase_nodes_keys = self.entity_embedding_store.get_all_ids()
-        graph_info["num_phrase_nodes"] = len(set(phrase_nodes_keys))
-
-        # get # of passage nodes
-        passage_nodes_keys = self.chunk_embedding_store.get_all_ids()
-        graph_info["num_passage_nodes"] = len(set(passage_nodes_keys))
-
-        # get # of total nodes
-        graph_info["num_total_nodes"] = graph_info["num_phrase_nodes"] + graph_info["num_passage_nodes"]
-
-        # get # of extracted triples
-        graph_info["num_extracted_triples"] = len(self.fact_embedding_store.get_all_ids())
-
-        num_triples_with_passage_node = 0
-        passage_nodes_set = set(passage_nodes_keys)
-        num_triples_with_passage_node = sum(
-            1 for node_pair in self.node_to_node_stats
-            if node_pair[0] in passage_nodes_set or node_pair[1] in passage_nodes_set
-        )
-        graph_info['num_triples_with_passage_node'] = num_triples_with_passage_node
-
-        graph_info['num_synonymy_triples'] = len(self.node_to_node_stats) - graph_info[
-            "num_extracted_triples"] - num_triples_with_passage_node
-
-        # get # of total triples
-        graph_info["num_total_triples"] = len(self.node_to_node_stats)
-
-        return graph_info
-
-    def prepare_retrieval_objects(self):
-        """
-        Prepares various in-memory objects and attributes necessary for fast retrieval processes, such as embedding data and graph relationships, ensuring consistency
-        and alignment with the underlying graph structure.
-        """
-
-        logger.info("Preparing for fast retrieval.")
-
-        logger.info("Loading keys.")
-        self.query_to_embedding: Dict = {'triple': {}, 'passage': {}}
-
-        self.entity_node_keys: List = list(self.entity_embedding_store.get_all_ids()) # a list of phrase node keys
-        self.passage_node_keys: List = list(self.chunk_embedding_store.get_all_ids()) # a list of passage node keys
-        self.fact_node_keys: List = list(self.fact_embedding_store.get_all_ids())
-
-        # Check if the graph has the expected number of nodes
-        expected_node_count = len(self.entity_node_keys) + len(self.passage_node_keys)
-        actual_node_count = self.graph.vcount()
-
-        if expected_node_count != actual_node_count:
-            logger.warning(f"Graph node count mismatch: expected {expected_node_count}, got {actual_node_count}")
-            # If the graph is empty but we have nodes, we need to add them
-            if actual_node_count == 0 and expected_node_count > 0:
-                logger.info(f"Initializing graph with {expected_node_count} nodes")
-                self.add_new_nodes()
-                self.save_igraph()
-
-        # Create mapping from node name to vertex index
-        try:
-            igraph_name_to_idx = {node["name"]: idx for idx, node in enumerate(self.graph.vs)} # from node key to the index in the backbone graph
-            self.node_name_to_vertex_idx = igraph_name_to_idx
-
-            # Check if all entity and passage nodes are in the graph
-            missing_entity_nodes = [node_key for node_key in self.entity_node_keys if node_key not in igraph_name_to_idx]
-            missing_passage_nodes = [node_key for node_key in self.passage_node_keys if node_key not in igraph_name_to_idx]
-
-            if missing_entity_nodes or missing_passage_nodes:
-                logger.warning(f"Missing nodes in graph: {len(missing_entity_nodes)} entity nodes, {len(missing_passage_nodes)} passage nodes")
-                # If nodes are missing, rebuild the graph
-                self.add_new_nodes()
-                self.save_igraph()
-                # Update the mapping
-                igraph_name_to_idx = {node["name"]: idx for idx, node in enumerate(self.graph.vs)}
-                self.node_name_to_vertex_idx = igraph_name_to_idx
-
-            self.entity_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.entity_node_keys] # a list of backbone graph node index
-            self.passage_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.passage_node_keys] # a list of backbone passage node index
-        except Exception as e:
-            logger.error(f"Error creating node index mapping: {str(e)}")
-            # Initialize with empty lists if mapping fails
-            self.node_name_to_vertex_idx = {}
-            self.entity_node_idxs = []
-            self.passage_node_idxs = []
-
-        logger.info("Loading embeddings.")
-        self.entity_embeddings = np.array(self.entity_embedding_store.get_embeddings(self.entity_node_keys))
-        self.passage_embeddings = np.array(self.chunk_embedding_store.get_embeddings(self.passage_node_keys))
-
-        self.fact_embeddings = np.array(self.fact_embedding_store.get_embeddings(self.fact_node_keys))
-
-        all_openie_info, chunk_keys_to_process = self.load_existing_openie([])
-
-        self.proc_triples_to_docs = {}
-
-        for doc in all_openie_info:
-            triples = flatten_facts([doc['extracted_triples']])
-            for triple in triples:
-                if len(triple) == 3:
-                    proc_triple = tuple(text_processing(list(triple)))
-                    self.proc_triples_to_docs[str(proc_triple)] = self.proc_triples_to_docs.get(str(proc_triple), set()).union(set([doc['idx']]))
-
-        if self.ent_node_to_chunk_ids is None:
-            ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
-
-            # Check if the lengths match
-            if not (len(self.passage_node_keys) == len(ner_results_dict) == len(triple_results_dict)):
-                logger.warning(f"Length mismatch: passage_node_keys={len(self.passage_node_keys)}, ner_results_dict={len(ner_results_dict)}, triple_results_dict={len(triple_results_dict)}")
-
-                # If there are missing keys, create empty entries for them
-                for chunk_id in self.passage_node_keys:
-                    if chunk_id not in ner_results_dict:
-                        ner_results_dict[chunk_id] = NerRawOutput(
-                            chunk_id=chunk_id,
-                            response=None,
-                            metadata={},
-                            unique_entities=[]
-                        )
-                    if chunk_id not in triple_results_dict:
-                        triple_results_dict[chunk_id] = TripleRawOutput(
-                            chunk_id=chunk_id,
-                            response=None,
-                            metadata={},
-                            triples=[]
-                        )
-
-            # prepare data_store
-            chunk_triples = [[text_processing(t) for t in triple_results_dict[chunk_id].triples] for chunk_id in self.passage_node_keys]
-
-            self.node_to_node_stats = {}
-            self.ent_node_to_chunk_ids = {}
-            self.add_fact_edges(self.passage_node_keys, chunk_triples)
-
-        self.ready_to_retrieve = True
 
     def get_query_embeddings(self, queries: List[str] | List[QuerySolution]):
         """

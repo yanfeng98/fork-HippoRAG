@@ -46,6 +46,18 @@ uv pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 python demo_openai.py
 ```
 
+## Code formatting
+
+```bash
+uv pip install yapf -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+---
+
+```bash
+bash format.sh
+```
+
 ```sh
 conda create -n hipporag python=3.10
 conda activate hipporag

@@ -1,6 +1,6 @@
 <h1 align="center">HippoRAG 2: From RAG to Memory</h1>
 <p align="center">
-    <img src="https://github.com/OSU-NLP-Group/HippoRAG/raw/main/images/hippo_brain.png" width="55%" style="max-width: 300px;">
+    <img src="./images/hippo_brain.png" width="55%" style="max-width: 300px;">
 </p>
 
 [<img align="center" src="https://img.shields.io/badge/arXiv-2502.14802 HippoRAG 2-b31b1b" />](https://arxiv.org/abs/2502.14802)
@@ -10,7 +10,7 @@
 ### HippoRAG 2 is a powerful memory framework for LLMs that enhances their ability to recognize and utilize connections in new knowledge—mirroring a key function of human long-term memory.
 
 <p align="center">
-  <img align="center" src="https://github.com/OSU-NLP-Group/HippoRAG/raw/main/images/intro.png" />
+  <img align="center" src="./images/intro.png" />
 </p>
 <p align="center">
   <b>Figure 1:</b> Evaluation of continual learning capabilities across three key dimensions: factual memory (NaturalQuestions, PopQA), sense-making (NarrativeQA), and associativity (MuSiQue, 2Wiki, HotpotQA, and LV-Eval). HippoRAG 2 surpasses other methods across all
@@ -18,7 +18,7 @@ categories, bringing it one step closer to true long-term memory.
 </p>
 
 <p align="center">
-  <img align="center" src="https://github.com/OSU-NLP-Group/HippoRAG/raw/main/images/methodology.png" />
+  <img align="center" src="./images/methodology.png" />
 </p>
 <p align="center">
   <b>Figure 2:</b> HippoRAG 2 methodology.
@@ -59,25 +59,14 @@ bash format.sh
 ```
 
 ```sh
-conda create -n hipporag python=3.10
-conda activate hipporag
-pip install hipporag
-```
-Initialize the environmental variables and activate the environment:
-
-```sh
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export HF_HOME=<path to Huggingface home directory>
-export OPENAI_API_KEY=<your openai api key>   # if you want to use OpenAI model
-
-conda activate hipporag
+export OPENAI_API_KEY=<your openai api key>
 ```
 
 ## Quick Start
 
 ### OpenAI Models
-
-This simple example will illustrate how to use `hipporag` with any OpenAI model:
 
 ```python
 from hipporag import HippoRAG
@@ -141,18 +130,6 @@ rag_results = hipporag.rag_qa(queries=queries,
                               gold_answers=answers)
 ```
 
-#### Example (OpenAI Compatible Embeddings)
-
-If you want to use LLMs and Embeddings Compatible to OpenAI, please use the following methods.</p>
-
-```python
-hipporag = HippoRAG(save_dir=save_dir,
-    llm_model_name='Your LLM Model name',
-    llm_base_url='Your LLM Model url',
-    embedding_model_name='Your Embedding model name',
-    embedding_base_url='Your Embedding model url')
-```
-
 ### Local Deployment (vLLM)
 
 This simple example will illustrate how to use `hipporag` with any vLLM-compatible locally deployed LLM.
@@ -188,20 +165,9 @@ hipporag = HippoRAG(save_dir=save_dir,
 
 ## Testing
 
-When making a contribution to HippoRAG, please run the scripts below to ensure that your changes do not result in unexpected behavior from our core modules.
-
-These scripts test for indexing, graph loading, document deletion and incremental updates to a HippoRAG object.
-
 ### OpenAI Test
 
-To test HippoRAG with an OpenAI LLM and embedding model, simply run the following.
-The cost of this test will be negligible.
-
 ```sh
-export OPENAI_API_KEY=<your openai api key>
-
-conda activate hipporag
-
 python tests_openai.py
 ```
 
@@ -420,47 +386,3 @@ When preparing your data, you may need to chunk each passage, as longer passage 
 
 
 ```
-
-## Contact
-
-Questions or issues? File an issue or contact
-[Bernal Jiménez Gutiérrez](mailto:jimenezgutierrez.1@osu.edu),
-[Yiheng Shu](mailto:shu.251@osu.edu),
-[Yu Su](mailto:su.809@osu.edu),
-The Ohio State University
-
-## Citation
-
-If you find this work useful, please consider citing our papers:
-
-### HippoRAG 2
-```
-@misc{gutiérrez2025ragmemorynonparametriccontinual,
-      title={From RAG to Memory: Non-Parametric Continual Learning for Large Language Models},
-      author={Bernal Jiménez Gutiérrez and Yiheng Shu and Weijian Qi and Sizhe Zhou and Yu Su},
-      year={2025},
-      eprint={2502.14802},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2502.14802},
-}
-```
-
-### HippoRAG
-
-```
-@inproceedings{gutiérrez2024hipporag,
-      title={HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models},
-      author={Bernal Jiménez Gutiérrez and Yiheng Shu and Yu Gu and Michihiro Yasunaga and Yu Su},
-      booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
-      year={2024},
-      url={https://openreview.net/forum?id=hkujvAPVsg}
- ```
-
-## TODO:
-
-- [x] Add support for more embedding models
-- [x] Add support for embedding endpoints
-- [ ] Add support for vector database integration
-
-Please feel free to open an issue or PR if you have any questions or suggestions.

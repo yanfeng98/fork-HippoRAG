@@ -822,7 +822,7 @@ class HippoRAG:
 
             # round off to 4 decimal places for QA results
             overall_qa_em_result.update(overall_qa_f1_result)
-            overall_qa_results = overall_qa_em_result
+            overall_qa_results: dict[str, float] = overall_qa_em_result
             overall_qa_results = {k: round(float(v), 4) for k, v in overall_qa_results.items()}
             logger.info(f"Evaluation results for QA: {overall_qa_results}")
 
@@ -880,7 +880,7 @@ class HippoRAG:
 
         self.get_query_embeddings(queries)
 
-        retrieval_results = []
+        retrieval_results: list[QuerySolution] = []
 
         for q_idx, query in tqdm(enumerate(queries), desc="Retrieving", total=len(queries)):
             rerank_start: float = time.time()
@@ -901,7 +901,7 @@ class HippoRAG:
                                                                                          top_k_fact_indices=top_k_fact_indices,
                                                                                          passage_node_weight=self.global_config.passage_node_weight)
 
-            top_k_docs = [self.chunk_embedding_store.get_row(self.passage_node_keys[idx])["content"] for idx in sorted_doc_ids[:num_to_retrieve]]
+            top_k_docs: list[str] = [self.chunk_embedding_store.get_row(self.passage_node_keys[idx])["content"] for idx in sorted_doc_ids[:num_to_retrieve]]
 
             retrieval_results.append(QuerySolution(question=query, docs=top_k_docs, doc_scores=sorted_doc_scores[:num_to_retrieve]))
 
@@ -916,7 +916,7 @@ class HippoRAG:
 
         # Evaluate retrieval
         if gold_docs is not None:
-            k_list = [1, 2, 5, 10, 20, 30, 50, 100, 150, 200]
+            k_list: list[int] = [1, 2, 5, 10, 20, 30, 50, 100, 150, 200]
             overall_retrieval_result, example_retrieval_results = retrieval_recall_evaluator.calculate_metric_scores(gold_docs=gold_docs, retrieved_docs=[retrieval_result.docs for retrieval_result in retrieval_results], k_list=k_list)
             logger.info(f"Evaluation results for retrieval: {overall_retrieval_result}")
 
@@ -1103,7 +1103,7 @@ class HippoRAG:
             logger.error(f"Error computing fact scores: {str(e)}")
             return np.array([])
 
-    def rerank_facts(self, query: str, query_fact_scores: np.ndarray) -> Tuple[List[int], List[Tuple], dict]:
+    def rerank_facts(self, query: str, query_fact_scores: np.ndarray) -> tuple[list[int], list[tuple[str, str, str]], dict[str, Any]]:
         """
 
         Args:
@@ -1152,6 +1152,283 @@ class HippoRAG:
         except Exception as e:
             logger.error(f"Error in rerank_facts: {str(e)}")
             return [], [], {'facts_before_rerank': [], 'facts_after_rerank': [], 'error': str(e)}
+
+    def dense_passage_retrieval(self, query: str) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Conduct dense passage retrieval to find relevant documents for a query.
+
+        This function processes a given query using a pre-trained embedding model
+        to generate query embeddings. The similarity scores between the query
+        embedding and passage embeddings are computed using dot product, followed
+        by score normalization. Finally, the function ranks the documents based
+        on their similarity scores and returns the ranked document identifiers
+        and their scores.
+
+        Parameters
+        ----------
+        query : str
+            The input query for which relevant passages should be retrieved.
+
+        Returns
+        -------
+        tuple : Tuple[np.ndarray, np.ndarray]
+            A tuple containing two elements:
+            - A list of sorted document identifiers based on their relevance scores.
+            - A numpy array of the normalized similarity scores for the corresponding
+              documents.
+        """
+        query_embedding: np.ndarray = self.query_to_embedding['passage'].get(query, None)
+        if query_embedding is None:
+            query_embedding: np.ndarray = self.embedding_model.batch_encode(query,
+                                                                instruction=get_query_instruction('query_to_passage'),
+                                                                norm=True)
+        query_doc_scores: np.ndarray = np.dot(self.passage_embeddings, query_embedding.T)
+        query_doc_scores = np.squeeze(query_doc_scores) if query_doc_scores.ndim == 2 else query_doc_scores
+        query_doc_scores = min_max_normalize(query_doc_scores)
+
+        sorted_doc_ids: np.ndarray = np.argsort(query_doc_scores)[::-1]
+        sorted_doc_scores: np.ndarray = query_doc_scores[sorted_doc_ids.tolist()]
+        return sorted_doc_ids, sorted_doc_scores
+
+    def graph_search_with_fact_entities(self, query: str,
+                                        link_top_k: int,
+                                        query_fact_scores: np.ndarray,
+                                        top_k_facts: list[tuple[str, str, str]],
+                                        top_k_fact_indices: List[str],
+                                        passage_node_weight: float = 0.05) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Computes document scores based on fact-based similarity and relevance using personalized
+        PageRank (PPR) and dense retrieval models. This function combines the signal from the relevant
+        facts identified with passage similarity and graph-based search for enhanced result ranking.
+
+        Parameters:
+            query (str): The input query string for which similarity and relevance computations
+                need to be performed.
+            link_top_k (int): The number of top phrases to include from the linking score map for
+                downstream processing.
+            query_fact_scores (np.ndarray): An array of scores representing fact-query similarity
+                for each of the provided facts.
+            top_k_facts (List[Tuple]): A list of top-ranked facts, where each fact is represented
+                as a tuple of its subject, predicate, and object.
+            top_k_fact_indices (List[str]): Corresponding indices or identifiers for the top-ranked
+                facts in the query_fact_scores array.
+            passage_node_weight (float): Default weight to scale passage scores in the graph.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple containing two arrays:
+                - The first array corresponds to document IDs sorted based on their scores.
+                - The second array consists of the PPR scores associated with the sorted document IDs.
+        """
+        #Assigning phrase weights based on selected facts from previous steps.
+        phrase_scores: dict[str, list[float]] = {}  # store all fact scores for each phrase regardless of whether they exist in the knowledge graph or not
+        linking_score_map: dict[str, float] = {}  # from phrase to the average scores of the facts that contain the phrase
+        phrase_weights: np.ndarray = np.zeros(len(self.graph.vs['name']))
+        passage_weights = np.zeros(len(self.graph.vs['name']))
+
+        for rank, f in enumerate(top_k_facts):
+            subject_phrase: str = f[0].lower()
+            predicate_phrase: str = f[1].lower()
+            object_phrase: str = f[2].lower()
+            fact_score: float = query_fact_scores[
+                top_k_fact_indices[rank]] if query_fact_scores.ndim > 0 else query_fact_scores
+            for phrase in [subject_phrase, object_phrase]:
+                phrase_key: str = compute_mdhash_id(
+                    content=phrase,
+                    prefix="entity-"
+                )
+                phrase_id: int = self.node_name_to_vertex_idx.get(phrase_key, None)
+
+                if phrase_id is not None:
+                    phrase_weights[phrase_id] = fact_score
+
+                    if len(self.ent_node_to_chunk_ids.get(phrase_key, set())) > 0:
+                        phrase_weights[phrase_id] /= len(self.ent_node_to_chunk_ids[phrase_key])
+
+                if phrase not in phrase_scores:
+                    phrase_scores[phrase] = []
+                phrase_scores[phrase].append(fact_score)
+
+        # calculate average fact score for each phrase
+        for phrase, scores in phrase_scores.items():
+            linking_score_map[phrase] = float(np.mean(scores))
+
+        if link_top_k:
+            phrase_weights, linking_score_map = self.get_top_k_weights(link_top_k,
+                                                                           phrase_weights,
+                                                                           linking_score_map)  # at this stage, the length of linking_scope_map is determined by link_top_k
+
+        #Get passage scores according to chosen dense retrieval model
+        dpr_sorted_doc_ids, dpr_sorted_doc_scores = self.dense_passage_retrieval(query)
+        normalized_dpr_sorted_scores: np.ndarray = min_max_normalize(dpr_sorted_doc_scores)
+
+        for i, dpr_sorted_doc_id in enumerate(dpr_sorted_doc_ids.tolist()):
+            passage_node_key: str = self.passage_node_keys[dpr_sorted_doc_id]
+            passage_dpr_score: float = normalized_dpr_sorted_scores[i]
+            passage_node_id: int = self.node_name_to_vertex_idx[passage_node_key]
+            passage_weights[passage_node_id] = passage_dpr_score * passage_node_weight
+            passage_node_text: str = self.chunk_embedding_store.get_row(passage_node_key)["content"]
+            linking_score_map[passage_node_text] = passage_dpr_score * passage_node_weight
+
+        #Combining phrase and passage scores into one array for PPR
+        node_weights: np.ndarray = phrase_weights + passage_weights
+
+        #Recording top 30 facts in linking_score_map
+        if len(linking_score_map) > 30:
+            linking_score_map = dict(sorted(linking_score_map.items(), key=lambda x: x[1], reverse=True)[:30])
+
+        assert sum(node_weights) > 0, f'No phrases found in the graph for the given facts: {top_k_facts}'
+
+        #Running PPR algorithm based on the passage and phrase weights previously assigned
+        ppr_start: float = time.time()
+        ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
+        ppr_end: float = time.time()
+
+        self.ppr_time += (ppr_end - ppr_start)
+
+        assert len(ppr_sorted_doc_ids) == len(
+            self.passage_node_idxs), f"Doc prob length {len(ppr_sorted_doc_ids)} != corpus length {len(self.passage_node_idxs)}"
+
+        return ppr_sorted_doc_ids, ppr_sorted_doc_scores
+
+    def get_top_k_weights(self,
+                          link_top_k: int,
+                          all_phrase_weights: np.ndarray,
+                          linking_score_map: Dict[str, float]) -> Tuple[np.ndarray, Dict[str, float]]:
+        """
+        This function filters the all_phrase_weights to retain only the weights for the
+        top-ranked phrases in terms of the linking_score_map. It also filters linking scores
+        to retain only the top `link_top_k` ranked nodes. Non-selected phrases in phrase
+        weights are reset to a weight of 0.0.
+
+        Args:
+            link_top_k (int): Number of top-ranked nodes to retain in the linking score map.
+            all_phrase_weights (np.ndarray): An array representing the phrase weights, indexed
+                by phrase ID.
+            linking_score_map (Dict[str, float]): A mapping of phrase content to its linking
+                score, sorted in descending order of scores.
+
+        Returns:
+            Tuple[np.ndarray, Dict[str, float]]: A tuple containing the filtered array
+            of all_phrase_weights with unselected weights set to 0.0, and the filtered
+            linking_score_map containing only the top `link_top_k` phrases.
+        """
+        # choose top ranked nodes in linking_score_map
+        linking_score_map: dict[str, float] = dict(sorted(linking_score_map.items(), key=lambda x: x[1], reverse=True)[:link_top_k])
+
+        # only keep the top_k phrases in all_phrase_weights
+        top_k_phrases: set[str] = set(linking_score_map.keys())
+        top_k_phrases_keys: list[str] = set(
+            [compute_mdhash_id(content=top_k_phrase, prefix="entity-") for top_k_phrase in top_k_phrases])
+
+        for phrase_key in self.node_name_to_vertex_idx:
+            if phrase_key not in top_k_phrases_keys:
+                phrase_id: int = self.node_name_to_vertex_idx.get(phrase_key, None)
+                if phrase_id is not None:
+                    all_phrase_weights[phrase_id] = 0.0
+
+        assert np.count_nonzero(all_phrase_weights) == len(linking_score_map.keys())
+        return all_phrase_weights, linking_score_map
+
+    def run_ppr(self,
+                reset_prob: np.ndarray,
+                damping: float =0.5) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Runs Personalized PageRank (PPR) on a graph and computes relevance scores for
+        nodes corresponding to document passages. The method utilizes a damping
+        factor for teleportation during rank computation and can take a reset
+        probability array to influence the starting state of the computation.
+
+        Parameters:
+            reset_prob (np.ndarray): A 1-dimensional array specifying the reset
+                probability distribution for each node. The array must have a size
+                equal to the number of nodes in the graph. NaNs or negative values
+                within the array are replaced with zeros.
+            damping (float): A scalar specifying the damping factor for the
+                computation. Defaults to 0.5 if not provided or set to `None`.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays. The
+                first array represents the sorted node IDs of document passages based
+                on their relevance scores in descending order. The second array
+                contains the corresponding relevance scores of each document passage
+                in the same order.
+        """
+
+        if damping is None: damping = 0.5 # for potential compatibility
+        reset_prob: np.ndarray = np.where(np.isnan(reset_prob) | (reset_prob < 0), 0, reset_prob)
+        pagerank_scores: list[float] = self.graph.personalized_pagerank(
+            vertices=range(len(self.node_name_to_vertex_idx)),
+            damping=damping,
+            directed=False,
+            weights='weight',
+            reset=reset_prob,
+            implementation='prpack'
+        )
+
+        doc_scores: np.ndarray = np.array([pagerank_scores[idx] for idx in self.passage_node_idxs])
+        sorted_doc_ids: np.ndarray = np.argsort(doc_scores)[::-1]
+        sorted_doc_scores: np.ndarray = doc_scores[sorted_doc_ids.tolist()]
+
+        return sorted_doc_ids, sorted_doc_scores
+
+    def qa(self, queries: List[QuerySolution]) -> Tuple[List[QuerySolution], List[str], List[Dict]]:
+        """
+        Executes question-answering (QA) inference using a provided set of query solutions and a language model.
+
+        Parameters:
+            queries: List[QuerySolution]
+                A list of QuerySolution objects that contain the user queries, retrieved documents, and other related information.
+
+        Returns:
+            Tuple[List[QuerySolution], List[str], List[Dict]]
+                A tuple containing:
+                - A list of updated QuerySolution objects with the predicted answers embedded in them.
+                - A list of raw response messages from the language model.
+                - A list of metadata dictionaries associated with the results.
+        """
+        #Running inference for QA
+        all_qa_messages: list[list[dict[str, str]]] = []
+
+        for query_solution in tqdm(queries, desc="Collecting QA prompts"):
+
+            # obtain the retrieved docs
+            retrieved_passages: list[str] = query_solution.docs[:self.global_config.qa_top_k]
+
+            prompt_user: str = ''
+            for passage in retrieved_passages:
+                prompt_user += f'Wikipedia Title: {passage}\n\n'
+            prompt_user += 'Question: ' + query_solution.question + '\nThought: '
+
+            if self.prompt_template_manager.is_template_name_valid(name=f'rag_qa_{self.global_config.dataset}'):
+                # find the corresponding prompt for this dataset
+                prompt_dataset_name = self.global_config.dataset
+            else:
+                # the dataset does not have a customized prompt template yet
+                logger.debug(
+                    f"rag_qa_{self.global_config.dataset} does not have a customized prompt template. Using MUSIQUE's prompt template instead.")
+                prompt_dataset_name = 'musique'
+            all_qa_messages.append(
+                self.prompt_template_manager.render(name=f'rag_qa_{prompt_dataset_name}', prompt_user=prompt_user))
+
+        all_qa_results: list[tuple[str, dict[str, Any], bool]] = [self.llm_model.infer(qa_messages) for qa_messages in tqdm(all_qa_messages, desc="QA Reading")]
+
+        all_response_message, all_metadata, all_cache_hit = zip(*all_qa_results)
+        all_response_message, all_metadata = list(all_response_message), list(all_metadata)
+
+        #Process responses and extract predicted answers.
+        queries_solutions: list[QuerySolution] = []
+        for query_solution_idx, query_solution in tqdm(enumerate(queries), desc="Extraction Answers from LLM Response"):
+            response_content: str = all_response_message[query_solution_idx]
+            try:
+                pred_ans: str = response_content.split('Answer:')[1].strip()
+            except Exception as e:
+                logger.warning(f"Error in parsing the answer from the raw LLM QA inference response: {str(e)}!")
+                pred_ans = response_content
+
+            query_solution.answer = pred_ans
+            queries_solutions.append(query_solution)
+
+        return queries_solutions, all_response_message, all_metadata
 
 
     def retrieve_dpr(self,
@@ -1299,286 +1576,3 @@ class HippoRAG:
         else:
             return queries_solutions, all_response_message, all_metadata
 
-    def qa(self, queries: List[QuerySolution]) -> Tuple[List[QuerySolution], List[str], List[Dict]]:
-        """
-        Executes question-answering (QA) inference using a provided set of query solutions and a language model.
-
-        Parameters:
-            queries: List[QuerySolution]
-                A list of QuerySolution objects that contain the user queries, retrieved documents, and other related information.
-
-        Returns:
-            Tuple[List[QuerySolution], List[str], List[Dict]]
-                A tuple containing:
-                - A list of updated QuerySolution objects with the predicted answers embedded in them.
-                - A list of raw response messages from the language model.
-                - A list of metadata dictionaries associated with the results.
-        """
-        #Running inference for QA
-        all_qa_messages = []
-
-        for query_solution in tqdm(queries, desc="Collecting QA prompts"):
-
-            # obtain the retrieved docs
-            retrieved_passages = query_solution.docs[:self.global_config.qa_top_k]
-
-            prompt_user = ''
-            for passage in retrieved_passages:
-                prompt_user += f'Wikipedia Title: {passage}\n\n'
-            prompt_user += 'Question: ' + query_solution.question + '\nThought: '
-
-            if self.prompt_template_manager.is_template_name_valid(name=f'rag_qa_{self.global_config.dataset}'):
-                # find the corresponding prompt for this dataset
-                prompt_dataset_name = self.global_config.dataset
-            else:
-                # the dataset does not have a customized prompt template yet
-                logger.debug(
-                    f"rag_qa_{self.global_config.dataset} does not have a customized prompt template. Using MUSIQUE's prompt template instead.")
-                prompt_dataset_name = 'musique'
-            all_qa_messages.append(
-                self.prompt_template_manager.render(name=f'rag_qa_{prompt_dataset_name}', prompt_user=prompt_user))
-
-        all_qa_results = [self.llm_model.infer(qa_messages) for qa_messages in tqdm(all_qa_messages, desc="QA Reading")]
-
-        all_response_message, all_metadata, all_cache_hit = zip(*all_qa_results)
-        all_response_message, all_metadata = list(all_response_message), list(all_metadata)
-
-        #Process responses and extract predicted answers.
-        queries_solutions = []
-        for query_solution_idx, query_solution in tqdm(enumerate(queries), desc="Extraction Answers from LLM Response"):
-            response_content = all_response_message[query_solution_idx]
-            try:
-                pred_ans = response_content.split('Answer:')[1].strip()
-            except Exception as e:
-                logger.warning(f"Error in parsing the answer from the raw LLM QA inference response: {str(e)}!")
-                pred_ans = response_content
-
-            query_solution.answer = pred_ans
-            queries_solutions.append(query_solution)
-
-        return queries_solutions, all_response_message, all_metadata
-
-
-
-
-
-    def dense_passage_retrieval(self, query: str) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Conduct dense passage retrieval to find relevant documents for a query.
-
-        This function processes a given query using a pre-trained embedding model
-        to generate query embeddings. The similarity scores between the query
-        embedding and passage embeddings are computed using dot product, followed
-        by score normalization. Finally, the function ranks the documents based
-        on their similarity scores and returns the ranked document identifiers
-        and their scores.
-
-        Parameters
-        ----------
-        query : str
-            The input query for which relevant passages should be retrieved.
-
-        Returns
-        -------
-        tuple : Tuple[np.ndarray, np.ndarray]
-            A tuple containing two elements:
-            - A list of sorted document identifiers based on their relevance scores.
-            - A numpy array of the normalized similarity scores for the corresponding
-              documents.
-        """
-        query_embedding = self.query_to_embedding['passage'].get(query, None)
-        if query_embedding is None:
-            query_embedding = self.embedding_model.batch_encode(query,
-                                                                instruction=get_query_instruction('query_to_passage'),
-                                                                norm=True)
-        query_doc_scores = np.dot(self.passage_embeddings, query_embedding.T)
-        query_doc_scores = np.squeeze(query_doc_scores) if query_doc_scores.ndim == 2 else query_doc_scores
-        query_doc_scores = min_max_normalize(query_doc_scores)
-
-        sorted_doc_ids = np.argsort(query_doc_scores)[::-1]
-        sorted_doc_scores = query_doc_scores[sorted_doc_ids.tolist()]
-        return sorted_doc_ids, sorted_doc_scores
-
-
-    def get_top_k_weights(self,
-                          link_top_k: int,
-                          all_phrase_weights: np.ndarray,
-                          linking_score_map: Dict[str, float]) -> Tuple[np.ndarray, Dict[str, float]]:
-        """
-        This function filters the all_phrase_weights to retain only the weights for the
-        top-ranked phrases in terms of the linking_score_map. It also filters linking scores
-        to retain only the top `link_top_k` ranked nodes. Non-selected phrases in phrase
-        weights are reset to a weight of 0.0.
-
-        Args:
-            link_top_k (int): Number of top-ranked nodes to retain in the linking score map.
-            all_phrase_weights (np.ndarray): An array representing the phrase weights, indexed
-                by phrase ID.
-            linking_score_map (Dict[str, float]): A mapping of phrase content to its linking
-                score, sorted in descending order of scores.
-
-        Returns:
-            Tuple[np.ndarray, Dict[str, float]]: A tuple containing the filtered array
-            of all_phrase_weights with unselected weights set to 0.0, and the filtered
-            linking_score_map containing only the top `link_top_k` phrases.
-        """
-        # choose top ranked nodes in linking_score_map
-        linking_score_map = dict(sorted(linking_score_map.items(), key=lambda x: x[1], reverse=True)[:link_top_k])
-
-        # only keep the top_k phrases in all_phrase_weights
-        top_k_phrases = set(linking_score_map.keys())
-        top_k_phrases_keys = set(
-            [compute_mdhash_id(content=top_k_phrase, prefix="entity-") for top_k_phrase in top_k_phrases])
-
-        for phrase_key in self.node_name_to_vertex_idx:
-            if phrase_key not in top_k_phrases_keys:
-                phrase_id = self.node_name_to_vertex_idx.get(phrase_key, None)
-                if phrase_id is not None:
-                    all_phrase_weights[phrase_id] = 0.0
-
-        assert np.count_nonzero(all_phrase_weights) == len(linking_score_map.keys())
-        return all_phrase_weights, linking_score_map
-
-    def graph_search_with_fact_entities(self, query: str,
-                                        link_top_k: int,
-                                        query_fact_scores: np.ndarray,
-                                        top_k_facts: List[Tuple],
-                                        top_k_fact_indices: List[str],
-                                        passage_node_weight: float = 0.05) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Computes document scores based on fact-based similarity and relevance using personalized
-        PageRank (PPR) and dense retrieval models. This function combines the signal from the relevant
-        facts identified with passage similarity and graph-based search for enhanced result ranking.
-
-        Parameters:
-            query (str): The input query string for which similarity and relevance computations
-                need to be performed.
-            link_top_k (int): The number of top phrases to include from the linking score map for
-                downstream processing.
-            query_fact_scores (np.ndarray): An array of scores representing fact-query similarity
-                for each of the provided facts.
-            top_k_facts (List[Tuple]): A list of top-ranked facts, where each fact is represented
-                as a tuple of its subject, predicate, and object.
-            top_k_fact_indices (List[str]): Corresponding indices or identifiers for the top-ranked
-                facts in the query_fact_scores array.
-            passage_node_weight (float): Default weight to scale passage scores in the graph.
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: A tuple containing two arrays:
-                - The first array corresponds to document IDs sorted based on their scores.
-                - The second array consists of the PPR scores associated with the sorted document IDs.
-        """
-        #Assigning phrase weights based on selected facts from previous steps.
-        linking_score_map = {}  # from phrase to the average scores of the facts that contain the phrase
-        phrase_scores = {}  # store all fact scores for each phrase regardless of whether they exist in the knowledge graph or not
-        phrase_weights = np.zeros(len(self.graph.vs['name']))
-        passage_weights = np.zeros(len(self.graph.vs['name']))
-
-        for rank, f in enumerate(top_k_facts):
-            subject_phrase = f[0].lower()
-            predicate_phrase = f[1].lower()
-            object_phrase = f[2].lower()
-            fact_score = query_fact_scores[
-                top_k_fact_indices[rank]] if query_fact_scores.ndim > 0 else query_fact_scores
-            for phrase in [subject_phrase, object_phrase]:
-                phrase_key = compute_mdhash_id(
-                    content=phrase,
-                    prefix="entity-"
-                )
-                phrase_id = self.node_name_to_vertex_idx.get(phrase_key, None)
-
-                if phrase_id is not None:
-                    phrase_weights[phrase_id] = fact_score
-
-                    if len(self.ent_node_to_chunk_ids.get(phrase_key, set())) > 0:
-                        phrase_weights[phrase_id] /= len(self.ent_node_to_chunk_ids[phrase_key])
-
-                if phrase not in phrase_scores:
-                    phrase_scores[phrase] = []
-                phrase_scores[phrase].append(fact_score)
-
-        # calculate average fact score for each phrase
-        for phrase, scores in phrase_scores.items():
-            linking_score_map[phrase] = float(np.mean(scores))
-
-        if link_top_k:
-            phrase_weights, linking_score_map = self.get_top_k_weights(link_top_k,
-                                                                           phrase_weights,
-                                                                           linking_score_map)  # at this stage, the length of linking_scope_map is determined by link_top_k
-
-        #Get passage scores according to chosen dense retrieval model
-        dpr_sorted_doc_ids, dpr_sorted_doc_scores = self.dense_passage_retrieval(query)
-        normalized_dpr_sorted_scores = min_max_normalize(dpr_sorted_doc_scores)
-
-        for i, dpr_sorted_doc_id in enumerate(dpr_sorted_doc_ids.tolist()):
-            passage_node_key = self.passage_node_keys[dpr_sorted_doc_id]
-            passage_dpr_score = normalized_dpr_sorted_scores[i]
-            passage_node_id = self.node_name_to_vertex_idx[passage_node_key]
-            passage_weights[passage_node_id] = passage_dpr_score * passage_node_weight
-            passage_node_text = self.chunk_embedding_store.get_row(passage_node_key)["content"]
-            linking_score_map[passage_node_text] = passage_dpr_score * passage_node_weight
-
-        #Combining phrase and passage scores into one array for PPR
-        node_weights = phrase_weights + passage_weights
-
-        #Recording top 30 facts in linking_score_map
-        if len(linking_score_map) > 30:
-            linking_score_map = dict(sorted(linking_score_map.items(), key=lambda x: x[1], reverse=True)[:30])
-
-        assert sum(node_weights) > 0, f'No phrases found in the graph for the given facts: {top_k_facts}'
-
-        #Running PPR algorithm based on the passage and phrase weights previously assigned
-        ppr_start = time.time()
-        ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
-        ppr_end = time.time()
-
-        self.ppr_time += (ppr_end - ppr_start)
-
-        assert len(ppr_sorted_doc_ids) == len(
-            self.passage_node_idxs), f"Doc prob length {len(ppr_sorted_doc_ids)} != corpus length {len(self.passage_node_idxs)}"
-
-        return ppr_sorted_doc_ids, ppr_sorted_doc_scores
-
-
-
-    def run_ppr(self,
-                reset_prob: np.ndarray,
-                damping: float =0.5) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Runs Personalized PageRank (PPR) on a graph and computes relevance scores for
-        nodes corresponding to document passages. The method utilizes a damping
-        factor for teleportation during rank computation and can take a reset
-        probability array to influence the starting state of the computation.
-
-        Parameters:
-            reset_prob (np.ndarray): A 1-dimensional array specifying the reset
-                probability distribution for each node. The array must have a size
-                equal to the number of nodes in the graph. NaNs or negative values
-                within the array are replaced with zeros.
-            damping (float): A scalar specifying the damping factor for the
-                computation. Defaults to 0.5 if not provided or set to `None`.
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays. The
-                first array represents the sorted node IDs of document passages based
-                on their relevance scores in descending order. The second array
-                contains the corresponding relevance scores of each document passage
-                in the same order.
-        """
-
-        if damping is None: damping = 0.5 # for potential compatibility
-        reset_prob = np.where(np.isnan(reset_prob) | (reset_prob < 0), 0, reset_prob)
-        pagerank_scores = self.graph.personalized_pagerank(
-            vertices=range(len(self.node_name_to_vertex_idx)),
-            damping=damping,
-            directed=False,
-            weights='weight',
-            reset=reset_prob,
-            implementation='prpack'
-        )
-
-        doc_scores = np.array([pagerank_scores[idx] for idx in self.passage_node_idxs])
-        sorted_doc_ids = np.argsort(doc_scores)[::-1]
-        sorted_doc_scores = doc_scores[sorted_doc_ids.tolist()]
-
-        return sorted_doc_ids, sorted_doc_scores

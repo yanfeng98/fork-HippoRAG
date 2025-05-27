@@ -32,17 +32,17 @@ class QAExactMatch(BaseMetric):
         """
         assert len(gold_answers) == len(predicted_answers), "Length of gold answers and predicted answers should be the same."
 
-        example_eval_results = []
-        total_em = 0
+        example_eval_results: list[dict[str, float]] = []
+        total_em: float = 0
 
         for gold_list, predicted in zip(gold_answers, predicted_answers):
-            em_scores = [1.0 if normalize_answer(gold) == normalize_answer(predicted) else 0.0 for gold in gold_list]
-            aggregated_em = aggregation_fn(em_scores)
+            em_scores: list[float] = [1.0 if normalize_answer(gold) == normalize_answer(predicted) else 0.0 for gold in gold_list]
+            aggregated_em: float = aggregation_fn(em_scores)
             example_eval_results.append({"ExactMatch": aggregated_em})
             total_em += aggregated_em
 
-        avg_em = total_em / len(gold_answers) if gold_answers else 0.0
-        pooled_eval_results = {"ExactMatch": avg_em}
+        avg_em: float = total_em / len(gold_answers) if gold_answers else 0.0
+        pooled_eval_results: dict[str, float] = {"ExactMatch": avg_em}
 
         return pooled_eval_results, example_eval_results
 
@@ -69,10 +69,10 @@ class QAF1Score(BaseMetric):
         assert len(gold_answers) == len(predicted_answers), "Length of gold answers and predicted answers should be the same."
 
         def compute_f1(gold: str, predicted: str) -> float:
-            gold_tokens = normalize_answer(gold).split()
-            predicted_tokens = normalize_answer(predicted).split()
-            common = Counter(predicted_tokens) & Counter(gold_tokens)
-            num_same = sum(common.values())
+            gold_tokens: list[str] = normalize_answer(gold).split()
+            predicted_tokens: list[str] = normalize_answer(predicted).split()
+            common: Counter = Counter(predicted_tokens) & Counter(gold_tokens)
+            num_same: int = sum(common.values())
 
             if num_same == 0:
                 return 0.0
@@ -82,15 +82,15 @@ class QAF1Score(BaseMetric):
             return 2 * (precision * recall) / (precision + recall)
 
         example_eval_results = []
-        total_f1 = 0.0
+        total_f1: float = 0.0
 
         for gold_list, predicted in zip(gold_answers, predicted_answers):
-            f1_scores = [compute_f1(gold, predicted) for gold in gold_list]
-            aggregated_f1 = aggregation_fn(f1_scores)
+            f1_scores: list[float] = [compute_f1(gold, predicted) for gold in gold_list]
+            aggregated_f1: float = aggregation_fn(f1_scores)
             example_eval_results.append({"F1": aggregated_f1})
             total_f1 += aggregated_f1
 
-        avg_f1 = total_f1 / len(gold_answers) if gold_answers else 0.0
-        pooled_eval_results = {"F1": avg_f1}
+        avg_f1: float = total_f1 / len(gold_answers) if gold_answers else 0.0
+        pooled_eval_results: dict[str, float] = {"F1": avg_f1}
 
         return pooled_eval_results, example_eval_results

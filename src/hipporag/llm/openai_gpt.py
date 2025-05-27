@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 def cache_response(func):
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args, **kwargs) -> tuple[str, dict[str, Any], bool]:
         # get messages from args or kwargs
         if args:
             messages: List[TextChatMessage] = args[0]
@@ -105,7 +105,7 @@ def cache_response(func):
 def dynamic_retry_decorator(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
-        max_retries: int = getattr(self, "max_retries", 5)  
+        max_retries: int = getattr(self, "max_retries", 5)
         dynamic_retry = retry(stop=stop_after_attempt(max_retries), wait=wait_fixed(1))
         decorated_func = dynamic_retry(func)
         return decorated_func(self, *args, **kwargs)
@@ -173,7 +173,7 @@ class CacheOpenAI(BaseLLM):
         self,
         messages: List[TextChatMessage],
         **kwargs
-    ) -> Tuple[List[TextChatMessage], dict]:
+    ) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = deepcopy(self.llm_config.generate_params)
         if kwargs:
             params.update(kwargs)
@@ -188,9 +188,9 @@ class CacheOpenAI(BaseLLM):
 
         response_message: str = response.choices[0].message.content
         assert isinstance(response_message, str), "response_message should be a string"
-        
+
         metadata: dict[str, Any] = {
-            "prompt_tokens": response.usage.prompt_tokens, 
+            "prompt_tokens": response.usage.prompt_tokens,
             "completion_tokens": response.usage.completion_tokens,
             "finish_reason": response.choices[0].finish_reason,
         }

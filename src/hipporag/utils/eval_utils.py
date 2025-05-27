@@ -15,17 +15,18 @@ def normalize_answer(answer: str) -> str:
     Returns:
         str: The normalized string.
     """
-    def remove_articles(text):
-        return re.sub(r"\b(a|an|the)\b", " ", text)
 
-    def white_space_fix(text):
-        return " ".join(text.split())
+    def lower(text: str) -> str:
+        return text.lower()
 
-    def remove_punc(text):
-        exclude = set(string.punctuation)
+    def remove_punc(text: str) -> str:
+        exclude: set[str] = set(string.punctuation)
         return "".join(ch for ch in text if ch not in exclude)
 
-    def lower(text):
-        return text.lower()
-    
+    def remove_articles(text: str) -> str:
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+
+    def white_space_fix(text: str) -> str:
+        return " ".join(text.split())
+
     return white_space_fix(remove_articles(remove_punc(lower(answer))))

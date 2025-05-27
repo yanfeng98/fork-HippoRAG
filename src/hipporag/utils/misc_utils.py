@@ -27,11 +27,6 @@ class TripleRawOutput:
     metadata: Dict[str, Any]
 
 @dataclass
-class LinkingOutput:
-    score: np.ndarray
-    type: Literal['node', 'dpr']
-
-@dataclass
 class QuerySolution:
     question: str
     docs: List[str]
@@ -41,7 +36,7 @@ class QuerySolution:
     gold_docs: Optional[List[str]] = None
 
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "question": self.question,
             "answer": self.answer,
@@ -50,6 +45,13 @@ class QuerySolution:
             "doc_scores": [round(v, 4) for v in self.doc_scores.tolist()[:5]]  if self.doc_scores is not None else None,
             "gold_docs": self.gold_docs,
         }
+
+@dataclass
+class LinkingOutput:
+    score: np.ndarray
+    type: Literal['node', 'dpr']
+
+
 
 def compute_mdhash_id(content: str, prefix: str = "") -> str:
     """
@@ -118,11 +120,11 @@ def min_max_normalize(x: np.ndarray) -> np.ndarray:
     min_val: float = np.min(x)
     max_val: float = np.max(x)
     range_val: float = max_val - min_val
-    
+
     # Handle the case where all values are the same (range is zero)
     if range_val == 0:
         return np.ones_like(x)  # Return an array of ones with the same shape as x
-    
+
     return (x - min_val) / range_val
 
 def all_values_of_same_length(data: dict) -> bool:

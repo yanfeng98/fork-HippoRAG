@@ -28,22 +28,22 @@ class RetrievalRecall(BaseMetric):
                 - A pooled dictionary with the averaged Recall@k across all examples.
                 - A list of dictionaries with Recall@k for each example.
         """
-        k_list = sorted(set(k_list))
+        k_list: list[int] = sorted(set(k_list))
 
-        example_eval_results = []
-        pooled_eval_results = {f"Recall@{k}": 0.0 for k in k_list}
+        example_eval_results: list[dict[str, float]] = []
+        pooled_eval_results: dict[str, float] = {f"Recall@{k}": 0.0 for k in k_list}
         for example_gold_docs, example_retrieved_docs in zip(gold_docs, retrieved_docs):
             if len(example_retrieved_docs) < k_list[-1]:
                 logger.warning(f"Length of retrieved docs ({len(example_retrieved_docs)}) is smaller than largest topk for recall score ({k_list[-1]})")
 
-            example_eval_result = {f"Recall@{k}": 0.0 for k in k_list}
+            example_eval_result: dict[str, float] = {f"Recall@{k}": 0.0 for k in k_list}
 
             # Compute Recall@k for each k
             for k in k_list:
                 # Get top-k retrieved documents
-                top_k_docs = example_retrieved_docs[:k]
+                top_k_docs: list[str] = example_retrieved_docs[:k]
                 # Calculate intersection with gold documents
-                relevant_retrieved = set(top_k_docs) & set(example_gold_docs)
+                relevant_retrieved: set[str] = set(top_k_docs) & set(example_gold_docs)
                 # Compute recall
                 if example_gold_docs:  # Avoid division by zero
                     example_eval_result[f"Recall@{k}"] = len(relevant_retrieved) / len(set(example_gold_docs))
@@ -58,10 +58,10 @@ class RetrievalRecall(BaseMetric):
                 pooled_eval_results[f"Recall@{k}"] += example_eval_result[f"Recall@{k}"]
 
         # Average pooled results over all examples
-        num_examples = len(gold_docs)
+        num_examples: int = len(gold_docs)
         for k in k_list:
             pooled_eval_results[f"Recall@{k}"] /= num_examples
 
         # round off to 4 decimal places for pooled results
-        pooled_eval_results = {k: round(v, 4) for k, v in pooled_eval_results.items()}
+        pooled_eval_results: dict[str, float] = {k: round(v, 4) for k, v in pooled_eval_results.items()}
         return pooled_eval_results, example_eval_results

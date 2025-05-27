@@ -146,6 +146,9 @@ class EmbeddingStore:
 
         return results
 
+    def get_row(self, hash_id: str) -> dict[str, str]:
+        return self.hash_id_to_row[hash_id]
+
     def delete(self, hash_ids):
         indices = []
 
@@ -162,8 +165,7 @@ class EmbeddingStore:
         logger.info(f"Saving record after deletion.")
         self._save_data()
 
-    def get_row(self, hash_id):
-        return self.hash_id_to_row[hash_id]
+
 
     def get_hash_id(self, text):
         return self.text_to_hash_id[text]

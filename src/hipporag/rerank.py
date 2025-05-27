@@ -53,14 +53,14 @@ class DSPyFilter:
             message_template.append({"role": "assistant", "content": self.one_output_template.format(fact_after_filter=demo["fact_after_filter"])})
         return message_template
 
-    def __call__(self, *args, **kwargs) -> Tuple[List[int], List[Tuple], dict]:
+    def __call__(self, *args, **kwargs) -> tuple[list[int], list[tuple[str, str, str]], dict[str, Any]]:
         return self.rerank(*args, **kwargs)
 
     def rerank(self,
                query: str,
                candidate_items: List[Tuple],
                candidate_indices: List[int],
-               len_after_rerank: int =None) -> Tuple[List[int], List[Tuple], dict]:
+               len_after_rerank: int =None) -> tuple[list[int], list[tuple[str, str, str]], dict[str, Any]]:
         fact_before_filter: dict[str, list[list[str]]] = {"fact": [list(candidate_item) for candidate_item in candidate_items]}
         try:
             # prediction = self.program(question=query, fact_before_filter=json.dumps(fact_before_filter))
@@ -89,7 +89,7 @@ class DSPyFilter:
 
         self.default_gen_kwargs['max_completion_tokens'] = 512
 
-        response = self.llm_infer_fn(
+        response: tuple[str, dict[str, Any], bool] = self.llm_infer_fn(
             messages=messages,
             model=self.model_name,
             **self.default_gen_kwargs

@@ -17,26 +17,26 @@ class PromptTemplateManager:
         metadata={"help": "Mapping from default roles in prompte template files to specific LLM providers' defined roles."}
     )
     templates: Dict[str, Union[Template, List[Dict[str, Any]]]] = field(
-        init=False, 
+        init=False,
         default_factory=dict,
         metadata={"help": "A dict from prompt template names to templates. A prompt template can be a Template instance or a chat history which is a list of dict with content as Template instance."}
     )
 
-    
+
     def __post_init__(self) -> None:
         """
         Initialize the templates directory and load templates.
         """
         current_file_path: str = os.path.abspath(__file__)
         package_dir: str = os.path.dirname(current_file_path)
-        
+
         # abs path to dir where each *.py file (exclude __init__.py) contains a variable prompt_template (a str or a chat history with content as raw str for being converted to a Template)
-        self.templates_dir: str = os.path.join(package_dir, "templates") 
+        self.templates_dir: str = os.path.join(package_dir, "templates")
 
         self._load_templates()
 
-    
-    
+
+
     def _load_templates(self) -> None:
         """
         Load all templates from Python scripts in the templates directory.
@@ -44,8 +44,8 @@ class PromptTemplateManager:
         if not os.path.exists(self.templates_dir):
             logger.error(f"Templates directory '{self.templates_dir}' does not exist.")
             raise FileNotFoundError(f"Templates directory '{self.templates_dir}' does not exist.")
-        
-        
+
+
         logger.info(f"Loading templates from directory: {self.templates_dir}")
         for filename in os.listdir(self.templates_dir):
             if filename.endswith(".py") and filename != "__init__.py":
@@ -65,7 +65,7 @@ class PromptTemplateManager:
 
                     prompt_template: list[dict[str, str]] = module.prompt_template
                     logger.debug(f"Loaded template from {module_name}")
-                    
+
                     if isinstance(prompt_template, Template):
                         self.templates[script_name] = prompt_template
                     elif isinstance(prompt_template, str):
@@ -143,8 +143,11 @@ class PromptTemplateManager:
             logger.error(f"Template '{name}' not found.")
             raise KeyError(f"Template '{name}' not found.")
         logger.debug(f"Retrieved template '{name}'.")
-        
+
         return self.templates[name]
+
+    def is_template_name_valid(self, name: str) -> bool:
+        return name in self.templates
 
     def sync_render(self, name: str, **kwargs) -> Union[str, List[Dict[str, Any]]]:
         return asyncio.run(self.render(name, **kwargs))
@@ -157,9 +160,9 @@ class PromptTemplateManager:
             List[str]: A list of template names.
         """
         logger.info("Listing all available template names.")
-        
+
         return list(self.templates.keys())
-    
+
     def print_template(self, name: str) -> None:
         """
         Print the prompt template string or chat history structure for the given template name.
@@ -182,7 +185,5 @@ class PromptTemplateManager:
         except KeyError as e:
             logger.error(f"Failed to print template '{name}': {e}")
             raise
-    
-    
-    def is_template_name_valid(self, name: str) -> bool:
-        return name in self.templates
+
+

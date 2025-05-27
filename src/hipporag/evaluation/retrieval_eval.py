@@ -6,6 +6,7 @@ from ..utils.config_utils import BaseConfig
 
 logger = get_logger(__name__)
 
+
 class RetrievalRecall(BaseMetric):
 
     metric_name: str = "retrieval_recall"
@@ -13,8 +14,10 @@ class RetrievalRecall(BaseMetric):
     def __init__(self, global_config: Optional[BaseConfig] = None):
         super().__init__(global_config)
 
-
-    def calculate_metric_scores(self, gold_docs: List[List[str]], retrieved_docs: List[List[str]], k_list: List[int] = [1, 5, 10, 20]) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
+    def calculate_metric_scores(self,
+                                gold_docs: List[List[str]],
+                                retrieved_docs: List[List[str]],
+                                k_list: List[int] = [1, 5, 10, 20]) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
         """
         Calculates Recall@k for each example and pools results for all queries.
 
@@ -34,7 +37,9 @@ class RetrievalRecall(BaseMetric):
         pooled_eval_results: dict[str, float] = {f"Recall@{k}": 0.0 for k in k_list}
         for example_gold_docs, example_retrieved_docs in zip(gold_docs, retrieved_docs):
             if len(example_retrieved_docs) < k_list[-1]:
-                logger.warning(f"Length of retrieved docs ({len(example_retrieved_docs)}) is smaller than largest topk for recall score ({k_list[-1]})")
+                logger.warning(
+                    f"Length of retrieved docs ({len(example_retrieved_docs)}) is smaller than largest topk for recall score ({k_list[-1]})"
+                )
 
             example_eval_result: dict[str, float] = {f"Recall@{k}": 0.0 for k in k_list}
 

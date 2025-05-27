@@ -16,15 +16,15 @@ from packaging import version
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from ..utils.config_utils import BaseConfig
-from ..utils.llm_utils import (
-    TextChatMessage
-)
+from ..utils.llm_utils import (TextChatMessage)
 from ..utils.logging_utils import get_logger
 from .base import BaseLLM, LLMConfig
 
 logger = get_logger(__name__)
 
+
 def cache_response(func):
+
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs) -> tuple[str, dict[str, Any], bool]:
         # get messages from args or kwargs
@@ -36,7 +36,8 @@ def cache_response(func):
             raise ValueError("Missing required 'messages' parameter for caching.")
 
         # get model, seed and temperature from kwargs or self.llm_config.generate_params
-        gen_params: dict[str, Any] = getattr(self, "llm_config", {}).generate_params if hasattr(self, "llm_config") else {}
+        gen_params: dict[str,
+                         Any] = getattr(self, "llm_config", {}).generate_params if hasattr(self, "llm_config") else {}
         model: str = kwargs.get("model", gen_params.get("model"))
         seed: int = kwargs.get("seed", gen_params.get("seed"))
         temperature: float = kwargs.get("temperature", gen_params.get("temperature"))
@@ -102,17 +103,22 @@ def cache_response(func):
 
     return wrapper
 
+
 def dynamic_retry_decorator(func):
+
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         max_retries: int = getattr(self, "max_retries", 5)
         dynamic_retry = retry(stop=stop_after_attempt(max_retries), wait=wait_fixed(1))
         decorated_func = dynamic_retry(func)
         return decorated_func(self, *args, **kwargs)
+
     return wrapper
+
 
 class CacheOpenAI(BaseLLM):
     """OpenAI LLM implementation."""
+
     @classmethod
     def from_experiment_config(cls, global_config: BaseConfig) -> "CacheOpenAI":
         config_dict: dict[str, Any] = global_config.__dict__
@@ -120,7 +126,10 @@ class CacheOpenAI(BaseLLM):
         cache_dir: str = os.path.join(global_config.save_dir, "llm_cache")
         return cls(cache_dir=cache_dir, global_config=global_config)
 
-    def __init__(self, cache_dir: str, global_config: BaseConfig, cache_filename: str = None,
+    def __init__(self,
+                 cache_dir: str,
+                 global_config: BaseConfig,
+                 cache_filename: str = None,
                  high_throughput: bool = True,
                  **kwargs) -> None:
 
@@ -139,7 +148,7 @@ class CacheOpenAI(BaseLLM):
         self._init_llm_config()
         if high_throughput:
             limits = httpx.Limits(max_connections=500, max_keepalive_connections=100)
-            client = httpx.Client(limits=limits, timeout=httpx.Timeout(5*60, read=5*60))
+            client = httpx.Client(limits=limits, timeout=httpx.Timeout(5 * 60, read=5 * 60))
         else:
             client = None
 
@@ -149,7 +158,8 @@ class CacheOpenAI(BaseLLM):
             self.openai_client = OpenAI(base_url=self.llm_base_url, http_client=client, max_retries=self.max_retries)
         else:
             self.openai_client = AzureOpenAI(api_version=self.global_config.azure_endpoint.split('api-version=')[1],
-                                             azure_endpoint=self.global_config.azure_endpoint, max_retries=self.max_retries)
+                                             azure_endpoint=self.global_config.azure_endpoint,
+                                             max_retries=self.max_retries)
 
     def _init_llm_config(self) -> None:
         config_dict: dict[str, Any] = self.global_config.__dict__
@@ -157,30 +167,28 @@ class CacheOpenAI(BaseLLM):
         config_dict['llm_name'] = self.global_config.llm_name
         config_dict['llm_base_url'] = self.global_config.llm_base_url
         config_dict['generate_params'] = {
-                "model": self.global_config.llm_name,
-                "max_completion_tokens": config_dict.get("max_new_tokens", 400),
-                "n": config_dict.get("num_gen_choices", 1),
-                "seed": config_dict.get("seed", 0),
-                "temperature": config_dict.get("temperature", 0.0),
-            }
+            "model": self.global_config.llm_name,
+            "max_completion_tokens": config_dict.get("max_new_tokens", 400),
+            "n": config_dict.get("num_gen_choices", 1),
+            "seed": config_dict.get("seed", 0),
+            "temperature": config_dict.get("temperature", 0.0),
+        }
 
         self.llm_config = LLMConfig.from_dict(config_dict=config_dict)
         logger.debug(f"Init {self.__class__.__name__}'s llm_config: {self.llm_config}")
 
     @cache_response
     @dynamic_retry_decorator
-    def infer(
-        self,
-        messages: List[TextChatMessage],
-        **kwargs
-    ) -> tuple[str, dict[str, Any]]:
+    def infer(self, messages: List[TextChatMessage], **kwargs) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = deepcopy(self.llm_config.generate_params)
         if kwargs:
             params.update(kwargs)
         params["messages"] = messages
         logger.debug(f"Calling OpenAI GPT API with:\n{params}")
 
-        if 'gpt' not in params['model'] or version.parse(openai.__version__) < version.parse("1.45.0"): # if we use vllm to call openai api or if we use openai but the version is too old to use 'max_completion_tokens' argument
+        if 'gpt' not in params['model'] or version.parse(openai.__version__) < version.parse(
+                "1.45.0"
+        ):  # if we use vllm to call openai api or if we use openai but the version is too old to use 'max_completion_tokens' argument
             # TODO strange version change in openai protocol, but our current vllm version not changed yet
             params['max_tokens'] = params.pop('max_completion_tokens')
 

@@ -14,9 +14,16 @@ query_prompt_one_shot_output = """
 # Question: {}
 
 # """
-prompt_template = [
-    {"role": "system", "content": ner_system},
-    {"role": "user", "content": query_prompt_one_shot_input},
-    {"role": "assistant", "content": query_prompt_one_shot_output},
-    {"role": "user", "content": "Question: ${query}"}
-]
+prompt_template = [{
+    "role": "system",
+    "content": ner_system
+}, {
+    "role": "user",
+    "content": query_prompt_one_shot_input
+}, {
+    "role": "assistant",
+    "content": query_prompt_one_shot_output
+}, {
+    "role": "user",
+    "content": "Question: ${query}"
+}]

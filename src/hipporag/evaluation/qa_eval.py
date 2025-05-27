@@ -9,6 +9,7 @@ from ..utils.eval_utils import normalize_answer
 
 logger = get_logger(__name__)
 
+
 # Reference: MRQA official eval
 class QAExactMatch(BaseMetric):
     metric_name: str = "qa_exact_match"
@@ -16,7 +17,10 @@ class QAExactMatch(BaseMetric):
     def __init__(self, global_config: Optional[BaseConfig] = None):
         super().__init__(global_config)
 
-    def calculate_metric_scores(self, gold_answers: List[List[str]], predicted_answers: List[str], aggregation_fn: Callable = np.max) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
+    def calculate_metric_scores(self,
+                                gold_answers: List[List[str]],
+                                predicted_answers: List[str],
+                                aggregation_fn: Callable = np.max) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
         """
         Calculates the Exact Match (EM) score.
 
@@ -30,13 +34,16 @@ class QAExactMatch(BaseMetric):
                 - A dictionary with the averaged EM score.
                 - A list of dictionaries with EM scores for each example.
         """
-        assert len(gold_answers) == len(predicted_answers), "Length of gold answers and predicted answers should be the same."
+        assert len(gold_answers) == len(
+            predicted_answers), "Length of gold answers and predicted answers should be the same."
 
         example_eval_results: list[dict[str, float]] = []
         total_em: float = 0
 
         for gold_list, predicted in zip(gold_answers, predicted_answers):
-            em_scores: list[float] = [1.0 if normalize_answer(gold) == normalize_answer(predicted) else 0.0 for gold in gold_list]
+            em_scores: list[float] = [
+                1.0 if normalize_answer(gold) == normalize_answer(predicted) else 0.0 for gold in gold_list
+            ]
             aggregated_em: float = aggregation_fn(em_scores)
             example_eval_results.append({"ExactMatch": aggregated_em})
             total_em += aggregated_em
@@ -46,13 +53,17 @@ class QAExactMatch(BaseMetric):
 
         return pooled_eval_results, example_eval_results
 
+
 class QAF1Score(BaseMetric):
     metric_name: str = "qa_f1_score"
 
     def __init__(self, global_config: Optional[BaseConfig] = None):
         super().__init__(global_config)
 
-    def calculate_metric_scores(self, gold_answers: List[List[str]], predicted_answers: List[str], aggregation_fn: Callable = np.max) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
+    def calculate_metric_scores(self,
+                                gold_answers: List[List[str]],
+                                predicted_answers: List[str],
+                                aggregation_fn: Callable = np.max) -> Tuple[Dict[str, float], List[Dict[str, float]]]:
         """
         Calculates the F1 score.
 
@@ -66,7 +77,8 @@ class QAF1Score(BaseMetric):
                 - A dictionary with the averaged F1 score.
                 - A list of dictionaries with F1 scores for each example.
         """
-        assert len(gold_answers) == len(predicted_answers), "Length of gold answers and predicted answers should be the same."
+        assert len(gold_answers) == len(
+            predicted_answers), "Length of gold answers and predicted answers should be the same."
 
         def compute_f1(gold: str, predicted: str) -> float:
             gold_tokens: list[str] = normalize_answer(gold).split()

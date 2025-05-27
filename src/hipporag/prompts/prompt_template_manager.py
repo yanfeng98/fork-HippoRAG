@@ -13,15 +13,21 @@ logger = get_logger(__name__)
 @dataclass
 class PromptTemplateManager:
     role_mapping: Dict[str, str] = field(
-        default_factory=lambda: {"system": "system", "user": "user", "assistant": "assistant"},
-        metadata={"help": "Mapping from default roles in prompte template files to specific LLM providers' defined roles."}
-    )
+        default_factory=lambda: {
+            "system": "system",
+            "user": "user",
+            "assistant": "assistant"
+        },
+        metadata={
+            "help": "Mapping from default roles in prompte template files to specific LLM providers' defined roles."
+        })
     templates: Dict[str, Union[Template, List[Dict[str, Any]]]] = field(
         init=False,
         default_factory=dict,
-        metadata={"help": "A dict from prompt template names to templates. A prompt template can be a Template instance or a chat history which is a list of dict with content as Template instance."}
-    )
-
+        metadata={
+            "help":
+                "A dict from prompt template names to templates. A prompt template can be a Template instance or a chat history which is a list of dict with content as Template instance."
+        })
 
     def __post_init__(self) -> None:
         """
@@ -35,8 +41,6 @@ class PromptTemplateManager:
 
         self._load_templates()
 
-
-
     def _load_templates(self) -> None:
         """
         Load all templates from Python scripts in the templates directory.
@@ -44,7 +48,6 @@ class PromptTemplateManager:
         if not os.path.exists(self.templates_dir):
             logger.error(f"Templates directory '{self.templates_dir}' does not exist.")
             raise FileNotFoundError(f"Templates directory '{self.templates_dir}' does not exist.")
-
 
         logger.info(f"Loading templates from directory: {self.templates_dir}")
         for filename in os.listdir(self.templates_dir):
@@ -71,17 +74,17 @@ class PromptTemplateManager:
                     elif isinstance(prompt_template, str):
                         self.templates[script_name] = Template(prompt_template)
                     elif isinstance(prompt_template, list) and all(
-                        isinstance(item, dict) and "role" in item and "content" in item for item in prompt_template
-                    ):
+                            isinstance(item, dict) and "role" in item and "content" in item
+                            for item in prompt_template):
                         # Adjust roles based on the provided role mapping
                         for item in prompt_template:
                             item["role"] = self.role_mapping.get(item["role"], item["role"])
-                            item["content"] = item["content"] if isinstance(item["content"], Template) else Template(item["content"])
+                            item["content"] = item["content"] if isinstance(item["content"], Template) else Template(
+                                item["content"])
                         self.templates[script_name] = prompt_template
                     else:
                         raise TypeError(
-                            f"Invalid prompt_template format in '{module_name}.py'. Must be a Template or List[Dict]."
-                        )
+                            f"Invalid prompt_template format in '{module_name}.py'. Must be a Template or List[Dict].")
 
                     logger.debug(f"Successfully loaded template '{script_name}' from '{module_name}.py'.")
 
@@ -103,7 +106,7 @@ class PromptTemplateManager:
         Raises:
             ValueError: If a required variable is missing.
         """
-        template: list[dict[str, str|Template]] = self.get_template(name)
+        template: list[dict[str, str | Template]] = self.get_template(name)
         if isinstance(template, Template):
             # Render a single string template
             try:
@@ -116,10 +119,10 @@ class PromptTemplateManager:
         elif isinstance(template, list):
             # Render a chat history
             try:
-                rendered_list: list[dict[str, str]] = [
-                    {"role": item["role"], "content": item["content"].substitute(**kwargs)}
-                    for item in template
-                ]
+                rendered_list: list[dict[str, str]] = [{
+                    "role": item["role"],
+                    "content": item["content"].substitute(**kwargs)
+                } for item in template]
                 logger.debug(f"Successfully rendered chat history template '{name}' with variables: {kwargs}.")
                 return rendered_list
             except KeyError as e:
@@ -185,5 +188,3 @@ class PromptTemplateManager:
         except KeyError as e:
             logger.error(f"Failed to print template '{name}': {e}")
             raise
-
-

@@ -20,12 +20,15 @@ class NVEmbedV2EmbeddingModel(BaseEmbeddingModel):
 
         if embedding_model_name is not None:
             self.embedding_model_name = embedding_model_name
-            logger.debug(f"Overriding {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
+            logger.debug(
+                f"Overriding {self.__class__.__name__}'s embedding_model_name with: {self.embedding_model_name}")
 
         self._init_embedding_config()
 
         # Initializing the embedding model
-        logger.debug(f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}")
+        logger.debug(
+            f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}"
+        )
 
         self.embedding_model = AutoModel.from_pretrained(**self.embedding_config.model_init_params)
         self.embedding_dim = self.embedding_model.config.hidden_size
@@ -66,10 +69,12 @@ class NVEmbedV2EmbeddingModel(BaseEmbeddingModel):
     #     return [text + self.embedding_model.tokenizer.eos_token for text in texts]
 
     def batch_encode(self, texts: List[str], **kwargs) -> None:
-        if isinstance(texts, str): texts = [texts]
+        if isinstance(texts, str):
+            texts = [texts]
 
         params = deepcopy(self.embedding_config.encode_params)
-        if kwargs: params.update(kwargs)
+        if kwargs:
+            params.update(kwargs)
 
         if "instruction" in kwargs:
             if kwargs["instruction"] != '':

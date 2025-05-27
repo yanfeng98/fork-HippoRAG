@@ -1,6 +1,7 @@
 import re
 import string
 
+
 def normalize_answer(answer: str) -> str:
     """
     Normalize a given string by applying the following transformations:

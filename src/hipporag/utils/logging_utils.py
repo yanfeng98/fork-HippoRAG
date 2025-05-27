@@ -9,6 +9,7 @@ import logging
 # # Logging level project-wide
 # LOG_LEVEL = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 
+
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger with a specific name and optional file logging.
@@ -24,6 +25,7 @@ def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
 
     return logger
+
 
 # def get_logger(name: str, log_file: str = None, level: int = LOG_LEVEL) -> logging.Logger:
 #     """

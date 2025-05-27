@@ -3,7 +3,12 @@ from tqdm import tqdm
 from typing import List, Generator, Tuple
 
 
-def retrieve_knn(query_ids: List[str], key_ids: List[str], query_vecs, key_vecs, k=2047, query_batch_size=1000,
+def retrieve_knn(query_ids: List[str],
+                 key_ids: List[str],
+                 query_vecs,
+                 key_vecs,
+                 k=2047,
+                 query_batch_size=1000,
                  key_batch_size=10000) -> dict[str, tuple[list[str], list[float]]]:
     """
     Retrieve the top-k nearest neighbors for each query id from the key ids.
@@ -19,7 +24,8 @@ def retrieve_knn(query_ids: List[str], key_ids: List[str], query_vecs, key_vecs,
     """
     device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    if len(key_vecs) == 0: return {}
+    if len(key_vecs) == 0:
+        return {}
 
     query_vecs: torch.Tensor = torch.tensor(query_vecs, dtype=torch.float32)
     query_vecs = torch.nn.functional.normalize(query_vecs, dim=1)
@@ -35,8 +41,7 @@ def retrieve_knn(query_ids: List[str], key_ids: List[str], query_vecs, key_vecs,
     for query_batch, query_batch_start_idx in tqdm(
             get_batches(vecs=query_vecs, batch_size=query_batch_size),
             total=(len(query_vecs) + query_batch_size - 1) // query_batch_size,  # Calculate total batches
-            desc="KNN for Queries"
-    ):
+            desc="KNN for Queries"):
         query_batch: torch.Tensor = query_batch.clone().detach()
         query_batch = query_batch.to(device)
 
@@ -50,7 +55,10 @@ def retrieve_knn(query_ids: List[str], key_ids: List[str], query_vecs, key_vecs,
             actual_key_batch_size: int = key_batch.size(0)
 
             similarity: torch.Tensor = torch.mm(query_batch, key_batch.T)
-            topk_sim_scores, topk_indices = torch.topk(similarity, min(k, actual_key_batch_size), dim=1, largest=True,
+            topk_sim_scores, topk_indices = torch.topk(similarity,
+                                                       min(k, actual_key_batch_size),
+                                                       dim=1,
+                                                       largest=True,
                                                        sorted=True)
 
             topk_indices += offset_keys
@@ -69,8 +77,10 @@ def retrieve_knn(query_ids: List[str], key_ids: List[str], query_vecs, key_vecs,
         batch_topk_indices: torch.Tensor = torch.cat(batch_topk_indices, dim=1)
 
         final_topk_sim_scores, final_topk_indices = torch.topk(batch_topk_sim_scores,
-                                                               min(k, batch_topk_sim_scores.size(1)), dim=1,
-                                                               largest=True, sorted=True)
+                                                               min(k, batch_topk_sim_scores.size(1)),
+                                                               dim=1,
+                                                               largest=True,
+                                                               sorted=True)
         final_topk_sim_scores: torch.Tensor = final_topk_sim_scores.cpu()
         final_topk_indices: torch.Tensor = final_topk_indices.cpu()
 

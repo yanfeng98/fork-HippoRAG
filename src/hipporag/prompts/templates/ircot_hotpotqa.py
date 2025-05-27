@@ -6,24 +6,17 @@ one_shot_ircot_demo_docs = (
     """Wikipedia Title: Give Peace a Chance\n"Give Peace a Chance" is an anti-war song written by John Lennon (credited to Lennon–McCartney), and performed with Yoko Ono in Montreal, Quebec, Canada. Released as a single in 1969 by the Plastic Ono Band on Apple Records (catalogue Apple 13 in the United Kingdom, Apple 1809 in the United States), it is the first solo single issued by Lennon, released when he was still a member of the Beatles, and became an anthem of the American anti-war movement during the 1970s. It peaked at number 14 on the "Billboard" Hot 100 and number 2 on the British singles chart.\n"""
 )
 
-
 one_shot_ircot_demo = (
     f'{one_shot_ircot_demo_docs}'
     '\n\nQuestion: '
     f"Nobody Loves You was written by John Lennon and released on what album that was issued by Apple Records, and was written, recorded, and released during his 18 month separation from Yoko Ono?"
     '\nThought: '
     f"The album issued by Apple Records, and written, recorded, and released during John Lennon's 18 month separation from Yoko Ono is Walls and Bridges. Nobody Loves You was written by John Lennon on Walls and Bridges album. So the answer is: Walls and Bridges."
-    '\n\n'
-)
+    '\n\n')
 
 ircot_system = (
     'You serve as an intelligent assistant, adept at facilitating users through complex, multi-hop reasoning across multiple documents. This task is illustrated through demonstrations, each consisting of a document set paired with a relevant question and its multi-hop reasoning thoughts. Your task is to generate one thought for current step, DON\'T generate the whole thoughts at once! If you reach what you believe to be the final step, start with "So the answer is:".'
     '\n\n'
-    f'{one_shot_ircot_demo}'
-)
+    f'{one_shot_ircot_demo}')
 
-
-prompt_template = [
-    {"role": "system", "content": ircot_system},
-    {"role": "user", "content": "${prompt_user}"}
-]
+prompt_template = [{"role": "system", "content": ircot_system}, {"role": "user", "content": "${prompt_user}"}]

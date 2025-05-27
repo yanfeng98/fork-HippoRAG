@@ -12,9 +12,14 @@ logger = get_logger(__name__)
 
 
 class VLLMOfflineOpenIE(OpenIE):
+
     def __init__(self, global_config):
 
-        self.prompt_template_manager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
+        self.prompt_template_manager = PromptTemplateManager(role_mapping={
+            "system": "system",
+            "user": "user",
+            "assistant": "assistant"
+        })
         self.llm_model = VLLMOffline(global_config)
 
     def batch_openie(self, chunks: Dict[str, ChunkInfo]) -> Tuple[Dict[str, NerRawOutput], Dict[str, TripleRawOutput]]:
@@ -34,15 +39,22 @@ class VLLMOfflineOpenIE(OpenIE):
         # Extract passages from the provided chunks
         chunk_passages = {chunk_key: chunk["content"] for chunk_key, chunk in chunks.items()}
 
-        ner_input_messages = [self.prompt_template_manager.render(name='ner', passage=p) for p in chunk_passages.values()]
-        ner_output, ner_output_metadata = self.llm_model.batch_infer(ner_input_messages, json_template='ner', max_tokens=512)
+        ner_input_messages = [
+            self.prompt_template_manager.render(name='ner', passage=p) for p in chunk_passages.values()
+        ]
+        ner_output, ner_output_metadata = self.llm_model.batch_infer(ner_input_messages,
+                                                                     json_template='ner',
+                                                                     max_tokens=512)
 
-        triple_extract_input_messages = [self.prompt_template_manager.render(
-            name='triple_extraction',
-            passage=passage,
-            named_entity_json=named_entities
-        ) for passage, named_entities in zip(chunk_passages.values(), ner_output)]
-        triple_output, triple_output_metadata = self.llm_model.batch_infer(triple_extract_input_messages, json_template='triples', max_tokens=2048)
+        triple_extract_input_messages = [
+            self.prompt_template_manager.render(name='triple_extraction',
+                                                passage=passage,
+                                                named_entity_json=named_entities)
+            for passage, named_entities in zip(chunk_passages.values(), ner_output)
+        ]
+        triple_output, triple_output_metadata = self.llm_model.batch_infer(triple_extract_input_messages,
+                                                                           json_template='triples',
+                                                                           max_tokens=2048)
 
         ner_raw_outputs = []
         for idx, ner_output_instance in enumerate(ner_output):
@@ -57,7 +69,9 @@ class VLLMOfflineOpenIE(OpenIE):
                 logger.warning("No entities extracted for chunk_id: {}".format(chunk_id))
             ner_raw_output = NerRawOutput(chunk_id, response, unique_entities, {})
             ner_raw_outputs.append(ner_raw_output)
-        ner_results_dict = {chunk_key: ner_raw_output for chunk_key, ner_raw_output in zip(chunks.keys(), ner_raw_outputs)}
+        ner_results_dict = {
+            chunk_key: ner_raw_output for chunk_key, ner_raw_output in zip(chunks.keys(), ner_raw_outputs)
+        }
 
         triple_raw_outputs = []
         for idx, triple_output_instance in enumerate(triple_output):
@@ -72,6 +86,8 @@ class VLLMOfflineOpenIE(OpenIE):
                 logger.warning("No triples extracted for chunk_id: {}".format(chunk_id))
             triple_raw_output = TripleRawOutput(chunk_id, response, triples, {})
             triple_raw_outputs.append(triple_raw_output)
-        triple_results_dict = {chunk_key: triple_raw_output for chunk_key, triple_raw_output in zip(chunks.keys(), triple_raw_outputs)}
+        triple_results_dict = {
+            chunk_key: triple_raw_output for chunk_key, triple_raw_output in zip(chunks.keys(), triple_raw_outputs)
+        }
 
         return ner_results_dict, triple_results_dict

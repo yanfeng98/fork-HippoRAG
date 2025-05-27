@@ -1,18 +1,9 @@
 import json
 import re
 from string import Template
-from typing import (
-    Optional,
-    Union,
-    List,
-    TypedDict
-)
+from typing import (Optional, Union, List, TypedDict)
 
-from openai import (
-    APIConnectionError,
-    RateLimitError,
-    Timeout
-)
+from openai import (APIConnectionError, RateLimitError, Timeout)
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -100,7 +91,10 @@ def fix_broken_generated_json(json_str: str) -> str:
 
     return json_str
 
-def convert_format_to_template(original_string: str, placeholder_mapping: Optional[dict] = None, static_values: Optional[dict] = None) -> str:
+
+def convert_format_to_template(original_string: str,
+                               placeholder_mapping: Optional[dict] = None,
+                               static_values: Optional[dict] = None) -> str:
     """
     Converts a .format() style string to a Template-style string.
 
@@ -136,6 +130,7 @@ def convert_format_to_template(original_string: str, placeholder_mapping: Option
 
     return template_string
 
+
 def filter_invalid_triples(triples: List[List[str]]) -> List[List[str]]:
     """
     Filters out invalid and duplicate triples from a list of triples.
@@ -161,7 +156,8 @@ def filter_invalid_triples(triples: List[List[str]]) -> List[List[str]]:
     valid_triples: list[list[str]] = []
 
     for triple in triples:
-        if len(triple) != 3: continue  # Skip triples that do not have exactly 3 elements
+        if len(triple) != 3:
+            continue  # Skip triples that do not have exactly 3 elements
 
         valid_triple: list[str] = [str(item) for item in triple]
         if tuple(valid_triple) not in unique_triples:
@@ -169,6 +165,7 @@ def filter_invalid_triples(triples: List[List[str]]) -> List[List[str]]:
             valid_triples.append(valid_triple)
 
     return valid_triples
+
 
 def safe_unicode_decode(content: Union[bytes, str]) -> str:
     """

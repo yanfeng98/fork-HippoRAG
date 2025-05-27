@@ -11,15 +11,14 @@ class BaseMetric:
     global_config: BaseConfig
     metric_name: str = "base"
 
-
     def __init__(self, global_config: Optional[BaseConfig] = None) -> None:
         if global_config is None:
             logger.debug("global config is not given. Using the default ExperimentConfig instance.")
             self.global_config: BaseConfig = BaseConfig()
-        else: self.global_config: BaseConfig = global_config
+        else:
+            self.global_config: BaseConfig = global_config
 
         logger.debug(f"Loading {self.__class__.__name__} with global_config: {asdict(self.global_config)}")
-
 
     def calculate_metric_scores(self) -> Tuple[Dict[str, Union[int, float]], List[Union[int, float]]]:
         """
@@ -30,5 +29,3 @@ class BaseMetric:
             Tuple[Dict[str, Union[int, float]], List[Union[int, float]]]
         """
         return {}, []
-
-

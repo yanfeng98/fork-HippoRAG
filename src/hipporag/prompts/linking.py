@@ -8,4 +8,3 @@ def get_query_instruction(linking_method: str) -> str:
     }
     default_instruction: str = 'Given a question, retrieve relevant documents that best answer the question.'
     return instructions.get(linking_method, default_instruction)
-    

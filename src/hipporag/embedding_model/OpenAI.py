@@ -13,6 +13,7 @@ from .base import BaseEmbeddingModel, EmbeddingConfig
 
 logger = get_logger(__name__)
 
+
 class OpenAIEmbeddingModel(BaseEmbeddingModel):
 
     def __init__(self, global_config: Optional[BaseConfig] = None, embedding_model_name: Optional[str] = None) -> None:
@@ -27,16 +28,14 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
 
         # Initializing the embedding model
         logger.debug(
-            f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}")
+            f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}"
+        )
 
         if self.global_config.azure_embedding_endpoint is None:
-            self.client = OpenAI(
-                base_url=self.global_config.embedding_base_url
-            )
+            self.client = OpenAI(base_url=self.global_config.embedding_base_url)
         else:
             self.client = AzureOpenAI(api_version=self.global_config.azure_embedding_endpoint.split('api-version=')[1],
                                       azure_endpoint=self.global_config.azure_embedding_endpoint)
-
 
     def _init_embedding_config(self) -> None:
         """
@@ -70,10 +69,12 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
         logger.debug(f"Init {self.__class__.__name__}'s embedding_config: {self.embedding_config}")
 
     def batch_encode(self, texts: List[str], **kwargs) -> np.ndarray:
-        if isinstance(texts, str): texts = [texts]
+        if isinstance(texts, str):
+            texts = [texts]
 
         params: dict[str, Any] = deepcopy(self.embedding_config.encode_params)
-        if kwargs: params.update(kwargs)
+        if kwargs:
+            params.update(kwargs)
 
         if "instruction" in kwargs:
             if kwargs["instruction"] != '':
@@ -93,7 +94,8 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 try:
                     results.append(self.encode(batch))
                 except:
-                    import ipdb; ipdb.set_trace()
+                    import ipdb
+                    ipdb.set_trace()
                 pbar.update(batch_size)
             pbar.close()
             results: np.ndarray = np.concatenate(results)

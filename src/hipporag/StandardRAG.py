@@ -34,6 +34,7 @@ from .utils.config_utils import BaseConfig
 
 logger = logging.getLogger(__name__)
 
+
 class StandardRAG:
 
     def __init__(self,
@@ -88,10 +89,10 @@ class StandardRAG:
             self.embedding_model = None
         else:
             self.embedding_model: BaseEmbeddingModel = _get_embedding_model_class(
-                embedding_model_name=self.global_config.embedding_model_name)(global_config=self.global_config,
-                                                                              embedding_model_name=self.global_config.embedding_model_name)
+                embedding_model_name=self.global_config.embedding_model_name)(
+                    global_config=self.global_config, embedding_model_name=self.global_config.embedding_model_name)
 
-        import ipdb;
+        import ipdb
         ipdb.set_trace()
 
         self.chunk_embedding_store = EmbeddingStore(self.embedding_model,
@@ -131,8 +132,7 @@ class StandardRAG:
         docs_to_delete = [doc for doc in docs_to_delete if doc in current_docs]
 
         #Get ids for chunks to delete
-        chunk_ids_to_delete = set(
-            [self.chunk_embedding_store.text_to_hash_id[chunk] for chunk in docs_to_delete])
+        chunk_ids_to_delete = set([self.chunk_embedding_store.text_to_hash_id[chunk] for chunk in docs_to_delete])
 
         logger.info(f"Deleting {len(chunk_ids_to_delete)} Chunks")
 
@@ -141,9 +141,9 @@ class StandardRAG:
         self.ready_to_retrieve = False
 
     def retrieve(self,
-                     queries: List[str],
-                     num_to_retrieve: int = None,
-                     gold_docs: List[List[str]] = None) -> List[QuerySolution] | Tuple[List[QuerySolution], Dict]:
+                 queries: List[str],
+                 num_to_retrieve: int = None,
+                 gold_docs: List[List[str]] = None) -> List[QuerySolution] | Tuple[List[QuerySolution], Dict]:
         """
         Performs retrieval using a DPR framework, which consists of several steps:
         - Dense passage scoring
@@ -187,8 +187,10 @@ class StandardRAG:
             logger.info('No facts found after reranking, return DPR results')
             sorted_doc_ids, sorted_doc_scores = self.dense_passage_retrieval(query)
 
-            top_k_docs = [self.chunk_embedding_store.get_row(self.passage_node_keys[idx])["content"] for idx in
-                          sorted_doc_ids[:num_to_retrieve]]
+            top_k_docs = [
+                self.chunk_embedding_store.get_row(self.passage_node_keys[idx])["content"]
+                for idx in sorted_doc_ids[:num_to_retrieve]
+            ]
 
             retrieval_results.append(
                 QuerySolution(question=query, docs=top_k_docs, doc_scores=sorted_doc_scores[:num_to_retrieve]))
@@ -203,7 +205,8 @@ class StandardRAG:
         if gold_docs is not None:
             k_list = [1, 2, 5, 10, 20, 30, 50, 100, 150, 200]
             overall_retrieval_result, example_retrieval_results = retrieval_recall_evaluator.calculate_metric_scores(
-                gold_docs=gold_docs, retrieved_docs=[retrieval_result.docs for retrieval_result in retrieval_results],
+                gold_docs=gold_docs,
+                retrieved_docs=[retrieval_result.docs for retrieval_result in retrieval_results],
                 k_list=k_list)
             logger.info(f"Evaluation results for retrieval: {overall_retrieval_result}")
 
@@ -211,10 +214,13 @@ class StandardRAG:
         else:
             return retrieval_results
 
-    def rag_qa(self,
-               queries: List[str|QuerySolution],
-               gold_docs: List[List[str]] = None,
-               gold_answers: List[List[str]] = None) -> Tuple[List[QuerySolution], List[str], List[Dict]] | Tuple[List[QuerySolution], List[str], List[Dict], Dict, Dict]:
+    def rag_qa(
+        self,
+        queries: List[str | QuerySolution],
+        gold_docs: List[List[str]] = None,
+        gold_answers: List[List[str]] = None
+    ) -> Tuple[List[QuerySolution], List[str], List[Dict]] | Tuple[List[QuerySolution], List[str], List[Dict], Dict,
+                                                                   Dict]:
         """
         Performs retrieval-augmented generation enhanced QA using a standard DPR framework.
 
@@ -263,10 +269,12 @@ class StandardRAG:
         # Evaluating QA
         if gold_answers is not None:
             overall_qa_em_result, example_qa_em_results = qa_em_evaluator.calculate_metric_scores(
-                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
+                gold_answers=gold_answers,
+                predicted_answers=[qa_result.answer for qa_result in queries_solutions],
                 aggregation_fn=np.max)
             overall_qa_f1_result, example_qa_f1_results = qa_f1_evaluator.calculate_metric_scores(
-                gold_answers=gold_answers, predicted_answers=[qa_result.answer for qa_result in queries_solutions],
+                gold_answers=gold_answers,
+                predicted_answers=[qa_result.answer for qa_result in queries_solutions],
                 aggregation_fn=np.max)
 
             # round off to 4 decimal places for QA results
@@ -319,7 +327,8 @@ class StandardRAG:
             else:
                 # the dataset does not have a customized prompt template yet
                 logger.debug(
-                    f"rag_qa_{self.global_config.dataset} does not have a customized prompt template. Using MUSIQUE's prompt template instead.")
+                    f"rag_qa_{self.global_config.dataset} does not have a customized prompt template. Using MUSIQUE's prompt template instead."
+                )
                 prompt_dataset_name = 'musique'
             all_qa_messages.append(
                 self.prompt_template_manager.render(name=f'rag_qa_{prompt_dataset_name}', prompt_user=prompt_user))
@@ -344,7 +353,6 @@ class StandardRAG:
 
         return queries_solutions, all_response_message, all_metadata
 
-
     def prepare_retrieval_objects(self):
         """
         Prepares various in-memory objects and attributes necessary for fast retrieval processes, such as embedding data and graph relationships, ensuring consistency
@@ -356,7 +364,7 @@ class StandardRAG:
         logger.info("Loading keys.")
         self.query_to_embedding: Dict = {'triple': {}, 'passage': {}}
 
-        self.passage_node_keys: List = list(self.chunk_embedding_store.get_all_ids()) # a list of passage node keys
+        self.passage_node_keys: List = list(self.chunk_embedding_store.get_all_ids())  # a list of passage node keys
 
         logger.info("Loading embeddings.")
         self.passage_embeddings = np.array(self.chunk_embedding_store.get_embeddings(self.passage_node_keys))
@@ -376,18 +384,16 @@ class StandardRAG:
 
         all_query_strings = []
         for query in queries:
-            if isinstance(query, QuerySolution) and (
-                    query.question not in self.query_to_embedding['triple'] or query.question not in
-                    self.query_to_embedding['passage']):
+            if isinstance(query, QuerySolution) and (query.question not in self.query_to_embedding['triple'] or
+                                                     query.question not in self.query_to_embedding['passage']):
                 all_query_strings.append(query.question)
             elif query not in self.query_to_embedding['triple'] or query not in self.query_to_embedding['passage']:
                 all_query_strings.append(query)
 
         if len(all_query_strings) > 0:
             logger.info(f"Encoding {len(all_query_strings)} queries for query_to_passage.")
-            query_embeddings_for_passage = self.embedding_model.batch_encode(all_query_strings,
-                                                                             instruction=get_query_instruction('query_to_passage'),
-                                                                             norm=True)
+            query_embeddings_for_passage = self.embedding_model.batch_encode(
+                all_query_strings, instruction=get_query_instruction('query_to_passage'), norm=True)
             for query, embedding in zip(all_query_strings, query_embeddings_for_passage):
                 self.query_to_embedding['passage'][query] = embedding
 

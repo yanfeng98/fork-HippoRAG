@@ -10,7 +10,6 @@ Pay attention to the following requirements:
 
 """
 
-
 ner_conditioned_re_frame: str = """Convert the paragraph into a JSON dict, it has a named entity list and a triple list.
 Paragraph:
 ```
@@ -20,9 +19,8 @@ Paragraph:
 {named_entity_json}
 """
 
-
-ner_conditioned_re_input: str = ner_conditioned_re_frame.format(passage=one_shot_ner_paragraph, named_entity_json=one_shot_ner_output)
-
+ner_conditioned_re_input: str = ner_conditioned_re_frame.format(passage=one_shot_ner_paragraph,
+                                                                named_entity_json=one_shot_ner_output)
 
 ner_conditioned_re_output: str = """{"triples": [
             ["Radio City", "located in", "India"],
@@ -41,10 +39,20 @@ ner_conditioned_re_output: str = """{"triples": [
 }
 """
 
-
-prompt_template: list[dict[str, str]] = [
-    {"role": "system", "content": ner_conditioned_re_system},
-    {"role": "user", "content": ner_conditioned_re_input},
-    {"role": "assistant", "content": ner_conditioned_re_output},
-    {"role": "user", "content": convert_format_to_template(original_string=ner_conditioned_re_frame, placeholder_mapping=None, static_values=None)}
-]
+prompt_template: list[dict[str, str]] = [{
+    "role": "system",
+    "content": ner_conditioned_re_system
+}, {
+    "role": "user",
+    "content": ner_conditioned_re_input
+}, {
+    "role": "assistant",
+    "content": ner_conditioned_re_output
+}, {
+    "role":
+        "user",
+    "content":
+        convert_format_to_template(original_string=ner_conditioned_re_frame,
+                                   placeholder_mapping=None,
+                                   static_values=None)
+}]

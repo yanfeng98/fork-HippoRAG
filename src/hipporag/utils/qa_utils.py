@@ -1,12 +1,10 @@
 from typing import Dict, List, Union, Any, Optional
 
-
 from ..prompts.prompt_template_manager import PromptTemplateManager
 from .logging_utils import get_logger
 from ..llm.openai_gpt import CacheOpenAI
 
 logger = get_logger(__name__)
-
 
 
 def merge_elements_with_same_first_line(elements, prefix='Wikipedia Title: '):
@@ -31,7 +29,8 @@ def merge_elements_with_same_first_line(elements, prefix='Wikipedia Title: '):
     return merged_elements
 
 
-def reason_step(dataset, prompt_template_manager: PromptTemplateManager, query: str, passages: list, thoughts: list, llm_client: CacheOpenAI):
+def reason_step(dataset, prompt_template_manager: PromptTemplateManager, query: str, passages: list, thoughts: list,
+                llm_client: CacheOpenAI):
     """
     Given few-shot samples, query, previous retrieved passages, and previous thoughts, generate the next thought with OpenAI models. The generated thought is used for further retrieval step.
     :return: next thought
@@ -44,7 +43,6 @@ def reason_step(dataset, prompt_template_manager: PromptTemplateManager, query: 
         prompt_user += f'{passage}\n\n'
     prompt_user += f'Question: {query}\nThought:' + ' '.join(thoughts)
 
-    
     messages = prompt_template_manager.render(name=f'ircot_{dataset}', prompt_user=prompt_user)
 
     try:
@@ -53,5 +51,5 @@ def reason_step(dataset, prompt_template_manager: PromptTemplateManager, query: 
     except Exception as e:
         logger.exception("An exception occurred while calling LLM for QA!")
         return ''
-    
+
     return response_content

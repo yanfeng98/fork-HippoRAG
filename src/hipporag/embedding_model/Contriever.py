@@ -12,10 +12,12 @@ from .base import BaseEmbeddingModel, EmbeddingConfig
 
 logger = get_logger(__name__)
 
+
 def mean_pooling(token_embeddings, mask):
     token_embeddings = token_embeddings.masked_fill(~mask[..., None].bool(), 0.)
     sentence_embeddings = token_embeddings.sum(dim=1) / mask.sum(dim=1)[..., None]
     return sentence_embeddings
+
 
 class ContrieverModel(BaseEmbeddingModel):
 
@@ -31,8 +33,8 @@ class ContrieverModel(BaseEmbeddingModel):
 
         # Initializing the embedding model
         logger.debug(
-            f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}")
-
+            f"Initializing {self.__class__.__name__}'s embedding model with params: {self.embedding_config.model_init_params}"
+        )
 
         self.tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
         self.embedding_model = AutoModel.from_pretrained(**self.embedding_config.model_init_params)
@@ -77,17 +79,20 @@ class ContrieverModel(BaseEmbeddingModel):
     def encode(self, texts: List[str]):
 
         with torch.no_grad():
-            inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors='pt').to(self.embedding_model.device)
+            inputs = self.tokenizer(texts, padding=True, truncation=True,
+                                    return_tensors='pt').to(self.embedding_model.device)
             outputs = self.embedding_model(**inputs)
             embeddings = mean_pooling(outputs[0], inputs['attention_mask'])
 
         return embeddings
 
     def batch_encode(self, texts: List[str], **kwargs) -> None:
-        if isinstance(texts, str): texts = [texts]
+        if isinstance(texts, str):
+            texts = [texts]
 
         params = deepcopy(self.embedding_config.encode_params)
-        if kwargs: params.update(kwargs)
+        if kwargs:
+            params.update(kwargs)
 
         batch_size = params.pop("batch_size", 16)
 

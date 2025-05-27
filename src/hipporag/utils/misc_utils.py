@@ -11,6 +11,7 @@ from .llm_utils import filter_invalid_triples
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class NerRawOutput:
     chunk_id: str
@@ -26,6 +27,7 @@ class TripleRawOutput:
     triples: List[List[str]]
     metadata: Dict[str, Any]
 
+
 @dataclass
 class QuerySolution:
     question: str
@@ -35,22 +37,21 @@ class QuerySolution:
     gold_answers: List[str] = None
     gold_docs: Optional[List[str]] = None
 
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "question": self.question,
             "answer": self.answer,
             "gold_answers": self.gold_answers,
             "docs": self.docs[:5],
-            "doc_scores": [round(v, 4) for v in self.doc_scores.tolist()[:5]]  if self.doc_scores is not None else None,
+            "doc_scores": [round(v, 4) for v in self.doc_scores.tolist()[:5]] if self.doc_scores is not None else None,
             "gold_docs": self.gold_docs,
         }
+
 
 @dataclass
 class LinkingOutput:
     score: np.ndarray
     type: Literal['node', 'dpr']
-
 
 
 def compute_mdhash_id(content: str, prefix: str = "") -> str:
@@ -66,35 +67,37 @@ def compute_mdhash_id(content: str, prefix: str = "") -> str:
     """
     return prefix + md5(content.encode()).hexdigest()
 
-def reformat_openie_results(corpus_openie_results: list[dict[str, Any]]) -> tuple[Dict[str, NerRawOutput], Dict[str, TripleRawOutput]]:
+
+def reformat_openie_results(
+        corpus_openie_results: list[dict[str, Any]]) -> tuple[Dict[str, NerRawOutput], Dict[str, TripleRawOutput]]:
 
     ner_output_dict: dict[str, NerRawOutput] = {
-        chunk_item['idx']: NerRawOutput(
-            chunk_id=chunk_item['idx'],
-            response=None,
-            metadata={},
-            unique_entities=list(np.unique(chunk_item['extracted_entities']))
-        )
+        chunk_item['idx']:
+            NerRawOutput(chunk_id=chunk_item['idx'],
+                         response=None,
+                         metadata={},
+                         unique_entities=list(np.unique(chunk_item['extracted_entities'])))
         for chunk_item in corpus_openie_results
     }
     triple_output_dict: dict[str, TripleRawOutput] = {
-        chunk_item['idx']: TripleRawOutput(
-            chunk_id=chunk_item['idx'],
-            response=None,
-            metadata={},
-            triples=filter_invalid_triples(triples=chunk_item['extracted_triples'])
-        )
+        chunk_item['idx']:
+            TripleRawOutput(chunk_id=chunk_item['idx'],
+                            response=None,
+                            metadata={},
+                            triples=filter_invalid_triples(triples=chunk_item['extracted_triples']))
         for chunk_item in corpus_openie_results
     }
 
     return ner_output_dict, triple_output_dict
 
-def text_processing(text: str|list[str]) -> str|list[str]:
+
+def text_processing(text: str | list[str]) -> str | list[str]:
     if isinstance(text, list):
         return [text_processing(t) for t in text]
     if not isinstance(text, str):
         text: str = str(text)
     return re.sub('[^A-Za-z0-9 ]', ' ', text.lower()).strip()
+
 
 def extract_entity_nodes(chunk_triples: List[List[Triple]]) -> tuple[List[str], List[List[str]]]:
     chunk_triple_entities: list[list[str]] = []  # a list of lists of unique entities from each chunk's triples
@@ -109,12 +112,14 @@ def extract_entity_nodes(chunk_triples: List[List[Triple]]) -> tuple[List[str], 
     graph_nodes: list[str] = list(np.unique([ent for ents in chunk_triple_entities for ent in ents]))
     return graph_nodes, chunk_triple_entities
 
+
 def flatten_facts(chunk_triples: List[List[Triple]]) -> List[Triple]:
     graph_triples: list[tuple[str, str, str]] = []  # a list of unique relation triple (in tuple) from all chunks
     for triples in chunk_triples:
         graph_triples.extend([tuple(t) for t in triples])
     graph_triples = list(set(graph_triples))
     return graph_triples
+
 
 def min_max_normalize(x: np.ndarray) -> np.ndarray:
     min_val: float = np.min(x)
@@ -126,6 +131,7 @@ def min_max_normalize(x: np.ndarray) -> np.ndarray:
         return np.ones_like(x)  # Return an array of ones with the same shape as x
 
     return (x - min_val) / range_val
+
 
 def all_values_of_same_length(data: dict) -> bool:
     """
@@ -155,5 +161,4 @@ def string_to_bool(v):
         return False
     else:
         raise ArgumentTypeError(
-            f"Truthy value expected: got {v} but expected one of yes/no, true/false, t/f, y/n, 1/0 (case insensitive)."
-        )
+            f"Truthy value expected: got {v} but expected one of yes/no, true/false, t/f, y/n, 1/0 (case insensitive).")

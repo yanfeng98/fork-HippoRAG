@@ -26,15 +26,23 @@ class LLMInput:
     chunk_id: str
     input_message: List[Dict]
 
+
 class OpenIE:
+
     def __init__(self, llm_model: CacheOpenAI):
         # Init prompt template manager
-        self.prompt_template_manager: PromptTemplateManager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
+        self.prompt_template_manager: PromptTemplateManager = PromptTemplateManager(role_mapping={
+            "system": "system",
+            "user": "user",
+            "assistant": "assistant"
+        })
         self.llm_model: CacheOpenAI = llm_model
 
     def openie(self, chunk_key: str, passage: str) -> Dict[str, Any]:
         ner_output = self.ner(chunk_key=chunk_key, passage=passage)
-        triple_output = self.triple_extraction(chunk_key=chunk_key, passage=passage, named_entities=ner_output.unique_entities)
+        triple_output = self.triple_extraction(chunk_key=chunk_key,
+                                               passage=passage,
+                                               named_entities=ner_output.unique_entities)
         return {"ner": ner_output, "triplets": triple_output}
 
     def batch_openie(self, chunks: Dict[str, ChunkInfo]) -> Tuple[Dict[str, NerRawOutput], Dict[str, TripleRawOutput]]:
@@ -88,10 +96,8 @@ class OpenIE:
         with ThreadPoolExecutor() as executor:
             # Create triple extraction futures for each chunk
             re_futures = {
-                executor.submit(self.triple_extraction, ner_result.chunk_id,
-                                chunk_passages[ner_result.chunk_id],
-                                ner_result.unique_entities): ner_result.chunk_id
-                for ner_result in ner_results_list
+                executor.submit(self.triple_extraction, ner_result.chunk_id, chunk_passages[ner_result.chunk_id], ner_result.unique_entities):
+                    ner_result.chunk_id for ner_result in ner_results_list
             }
             # Collect triple extraction results with progress bar
             pbar = tqdm(as_completed(re_futures), total=len(re_futures), desc="Extracting triples")
@@ -115,6 +121,7 @@ class OpenIE:
         return ner_results_dict, triple_results_dict
 
     def ner(self, chunk_key: str, passage: str) -> NerRawOutput:
+
         def _extract_ner_from_response(real_response: str) -> list[str]:
             pattern: str = r'\{[^{}]*"named_entities"\s*:\s*\[[^\]]*\][^{}]*\}'
             match = re.search(pattern, real_response, re.DOTALL)
@@ -122,7 +129,7 @@ class OpenIE:
                 # If pattern doesn't match, return an empty list
                 return []
             return eval(match.group())["named_entities"]
-        
+
         # PREPROCESSING
         ner_input_message: list[dict[str, str]] = self.prompt_template_manager.render(name='ner', passage=passage)
         raw_response: str = ""
@@ -151,14 +158,13 @@ class OpenIE:
                 metadata=metadata  # Store the error message in metadata
             )
 
-        return NerRawOutput(
-            chunk_id=chunk_key,
-            response=raw_response,
-            unique_entities=unique_entities,
-            metadata=metadata
-        )
+        return NerRawOutput(chunk_id=chunk_key,
+                            response=raw_response,
+                            unique_entities=unique_entities,
+                            metadata=metadata)
 
     def triple_extraction(self, chunk_key: str, passage: str, named_entities: List[str]) -> TripleRawOutput:
+
         def _extract_triples_from_response(real_response: str) -> list[str]:
             pattern = r'\{[^{}]*"triples"\s*:\s*\[[^\]]*\][^{}]*\}'
             match = re.search(pattern, real_response, re.DOTALL)
@@ -168,11 +174,10 @@ class OpenIE:
             return eval(match.group())["triples"]
 
         # PREPROCESSING
-        messages: list[dict[str, str]] = self.prompt_template_manager.render(
-            name='triple_extraction',
-            passage=passage,
-            named_entity_json=json.dumps({"named_entities": named_entities})
-        )
+        messages: list[dict[str, str]] = self.prompt_template_manager.render(name='triple_extraction',
+                                                                             passage=passage,
+                                                                             named_entity_json=json.dumps(
+                                                                                 {"named_entities": named_entities}))
 
         raw_response: str = ""
         metadata: dict[str, str] = {}
@@ -192,17 +197,7 @@ class OpenIE:
         except Exception as e:
             logger.warning(f"Exception for chunk {chunk_key}: {e}")
             metadata.update({'error': str(e)})
-            return TripleRawOutput(
-                chunk_id=chunk_key,
-                response=raw_response,
-                metadata=metadata,
-                triples=[]
-            )
+            return TripleRawOutput(chunk_id=chunk_key, response=raw_response, metadata=metadata, triples=[])
 
         # Success
-        return TripleRawOutput(
-            chunk_id=chunk_key,
-            response=raw_response,
-            metadata=metadata,
-            triples=triplets
-        )
+        return TripleRawOutput(chunk_id=chunk_key, response=raw_response, metadata=metadata, triples=triplets)
